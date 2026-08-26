@@ -1,0 +1,81 @@
+Metadata-Version: 2.4
+Name: ai-software-engineering-agent
+Version: 0.1.0
+Summary: A minimal AI software engineering agent scaffold.
+Author: AI Software Engineering Agent
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0,>=0.115
+Requires-Dist: openai<3.0,>=1.0
+Requires-Dist: uvicorn[standard]<1.0,>=0.30
+Requires-Dist: pydantic<3.0,>=2.0
+Provides-Extra: postgres
+Requires-Dist: psycopg[binary]<4.0,>=3.1; extra == "postgres"
+Requires-Dist: pgvector<1.0,>=0.2; extra == "postgres"
+Provides-Extra: dev
+Requires-Dist: pytest<9.0,>=8.0; extra == "dev"
+Requires-Dist: httpx<1.0,>=0.27; extra == "dev"
+Requires-Dist: pytest-asyncio<1.0,>=0.23; extra == "dev"
+
+# AI Software Engineering Agent
+
+A repository-agnostic AI software engineering assistant. The first milestone exposes a small FastAPI service backed by the OpenAI Responses API. Repository ingestion, retrieval, tools, and agent orchestration follow in later milestones.
+
+## Prerequisites
+
+- Python 3.11+
+- An OpenAI API key
+
+## Run Locally
+
+Install the project dependencies:
+
+```powershell
+python -m pip install -e .
+```
+
+Create a local environment file from the example, then replace the API-key placeholder:
+
+```powershell
+Copy-Item .env.example .env
+$env:OPENAI_API_KEY = "your_api_key"
+```
+
+The current settings loader reads environment variables. The `.env` file is intentionally ignored by Git and serves as a local reference; load it through your shell or IDE before starting the API.
+
+Start the service:
+
+```powershell
+uvicorn ai_software_engineering_agent.app:app --reload
+```
+
+The interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+
+Send a generation request:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/v1/generate" `
+  -ContentType "application/json" `
+  -Body '{"prompt":"Explain the purpose of a yield curve in two sentences."}'
+```
+
+`GET /health` does not require credentials. `POST /v1/generate` returns a clear error until `OPENAI_API_KEY` is configured.
+
+## Configuration
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Credential used only by the OpenAI adapter | Required for generation |
+| `LLM_PROVIDER` | Selected LLM provider | `openai` |
+| `LLM_MODEL` | OpenAI model identifier | `gpt-5.2` |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | OpenAI request timeout | `30` |
+| `ALLOWED_REPOSITORY_ROOTS` | Comma-separated approved paths for later ingestion/tools | Empty |
+
+## Tests
+
+```powershell
+pytest
+```
+
+The test suite uses a fake LLM client and never makes external API calls.
