@@ -6,7 +6,13 @@ import pytest
 from ai_software_engineering_agent.config import Settings
 from ai_software_engineering_agent.embeddings import FakeEmbeddingClient
 from ai_software_engineering_agent.llm import LLMRequest, LLMResponse
-from ai_software_engineering_agent.models import CodeChunk, RepositorySpec, RetrievalResult
+from ai_software_engineering_agent.models import (
+    CodeChunk,
+    MetadataFilter,
+    RepositorySpec,
+    RetrievalResult,
+    RetrievalStrategy,
+)
 from ai_software_engineering_agent.rag import (
     RAGService,
     extract_citations,
@@ -63,7 +69,6 @@ def test_extract_citations_finds_file_and_line_tags():
 
 @pytest.mark.asyncio
 async def test_rag_service_end_to_end_flow(tmp_path: Path):
-    # Setup test repository files
     repo_dir = tmp_path / "bond_repo"
     repo_dir.mkdir()
 
@@ -108,11 +113,13 @@ async def test_rag_service_end_to_end_flow(tmp_path: Path):
     assert summary.files_scanned == 1
     assert summary.chunks_created >= 1
     assert await vector_store.count_chunks("bond-repo") >= 1
+    assert rag_service.bm25_index.count("bond-repo") >= 1
 
-    # 2. Answer query
+    # 2. Answer query using Hybrid retrieval
     rag_response = await rag_service.answer_query(
         query="How is the zero rate calculated?",
-        repo_id="bond-repo",
+        strategy=RetrievalStrategy.HYBRID,
+        filter=MetadataFilter(repo_id="bond-repo"),
     )
 
     assert "zero rate" in rag_response.answer
@@ -120,4 +127,6 @@ async def test_rag_service_end_to_end_flow(tmp_path: Path):
     assert rag_response.citations[0].file_path == "curve.py"
     assert rag_response.citations[0].start_line == 6
     assert rag_response.citations[0].end_line == 8
+    assert rag_response.citations[0].is_verified is True
     assert len(rag_response.retrieved_chunks) >= 1
+    assert rag_response.strategy_used == "hybrid"

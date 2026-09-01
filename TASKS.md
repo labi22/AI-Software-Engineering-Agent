@@ -92,37 +92,39 @@ Interview checkpoints:
 
 ## Day 5-6: Retrieval Quality And Citations
 
-- [ ] Add keyword/BM25-style search or another lexical retrieval baseline.
-- [ ] Add hybrid retrieval strategy.
-- [ ] Add metadata filters.
-- [ ] Add reranking or a simple scoring layer.
-- [ ] Add query rewriting or query expansion if needed.
-- [ ] Add citation formatting and source validation.
-- [ ] Add debug output for retrieved chunks.
-- [ ] Add retrieval quality experiments for Target Repo 1.
+- [x] Add keyword/BM25-style search or another lexical retrieval baseline.
+- [x] Add hybrid retrieval strategy.
+- [x] Add metadata filters.
+- [x] Add reranking or a simple scoring layer.
+- [x] Add query rewriting or query expansion if needed.
+- [x] Add citation formatting and source validation.
+- [x] Add debug output for retrieved chunks.
+- [x] Add retrieval quality experiments for Target Repo 1.
 
 Acceptance checks:
-- [ ] Compare baseline retrieval and improved retrieval.
-- [ ] Record retrieval examples and failure cases.
-- [ ] RAG answers cite the chunks they actually used.
+- [x] Compare baseline retrieval and improved retrieval.
+- [x] Record retrieval examples and failure cases.
+- [x] RAG answers cite the chunks they actually used.
 
 Interview checkpoints:
-- [ ] Explain top-k, recall, precision, MRR, reranking, and hybrid search.
-- [ ] Explain common RAG failure modes and how to debug them.
+- [x] Explain top-k, recall, precision, MRR, reranking, and hybrid search.
+- [x] Explain common RAG failure modes and how to debug them.
 
 ## Day 7: Agent Loop And State
 
-- [ ] Define agent state model.
-- [ ] Define action and observation records.
-- [ ] Implement minimal agent loop.
-- [ ] Add tool selection placeholder or LLM-driven function selection.
-- [ ] Add step limits and stopping conditions.
-- [ ] Add trace logging for each reasoning/action step.
+- [x] Define agent state model.
+- [x] Define action and observation records.
+- [x] Implement minimal agent loop.
+- [x] Add tool selection placeholder or LLM-driven function selection.
+- [x] Add step limits and stopping conditions.
+- [x] Add trace logging for each reasoning/action step.
+- [x] Wire `POST /v1/agent/run` endpoint with request/response models and full trace serialisation.
+- [x] Add tests for agent state, tool registry, loop behaviour, and API endpoint.
 
 Acceptance checks:
-- [ ] Agent can decide between answering directly and using retrieval.
-- [ ] Agent trace is inspectable.
-- [ ] Loop fails safely when it cannot complete a task.
+- [x] Agent can decide between answering directly and using retrieval.
+- [x] Agent trace is inspectable.
+- [x] Loop fails safely when it cannot complete a task.
 
 Interview checkpoints:
 - [ ] Explain the difference between RAG and an agent.
@@ -262,7 +264,10 @@ Acceptance checks:
  - [x] Implement embedding abstraction and OpenAI embeddings adapter.
  - [x] Implement VectorStore abstraction, in-memory store, and pgvector store.
  - [x] Implement RAGService and FastAPI `/v1/repositories/ingest` and `/v1/rag/query`.
- - [ ] Day 5-6: Add keyword/BM25 search, hybrid retrieval, and reranking.
+ - [x] Implement BM25 lexical index, Reciprocal Rank Fusion (RRF), and SymbolBoostReranker.
+ - [x] Implement citation source verification and retrieval rank debug tracing.
+ - [x] Day 7: Implement Agent Loop, State Management, Actions, Observations, Tool Selection, and `POST /v1/agent/run` endpoint.
+ - [ ] Day 8-9: Implement safe engineering tools: `list_files`, `search_code`, `read_file`, `run_python`, `run_tests`, `git_diff` with path safety checks, timeouts, and output limits.
 
 ## Decision Log
 
@@ -275,6 +280,8 @@ Acceptance checks:
 | 2026-08-25 | Do not include GitHub Copilot as a provider adapter. | It requires an authenticated Copilot CLI/runtime and subscription. |
 | 2026-08-25 | Use the existing local bond valuation project as Target Repo 1. | It is an external local repository suitable for validating repository-agnostic ingestion. |
 | 2026-08-25 | Use PostgreSQL + pgvector from the first RAG milestone. | The project should build directly on its chosen durable vector storage layer. |
+| 2026-08-27 | Use `<tool_call>` XML tags for tool invocation instead of OpenAI function-calling JSON mode. | Keeps the agent portable across LLM providers and avoids SDK-specific structured output requirements. |
+| 2026-08-27 | Fix: check `is_done()` before `add_observation_step()` in the agent loop. | `add_observation_step()` overwrites status to `OBSERVING`, masking the `FINISHED` status set by `final_answer` inside `execute()`. The `already_done` guard preserves terminal state across the observation recording boundary. |
 
 ## Open Questions
 

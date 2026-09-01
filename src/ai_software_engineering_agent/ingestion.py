@@ -21,6 +21,7 @@ DEFAULT_EXCLUDED_DIRS = {
     ".mypy_cache",
     ".ruff_cache",
     ".tox",
+    ".ipynb_checkpoints",
     "node_modules",
     "dist",
     "build",

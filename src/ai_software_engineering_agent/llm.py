@@ -91,8 +91,25 @@ class OpenAIResponsesClient:
         )
 
 
+class FakeLLMClient:
+    """Fake LLM client for offline development and testing."""
+
+    def __init__(self, response_text: str = "A mock generated answer grounded in context.") -> None:
+        self.response_text = response_text
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        return LLMResponse(
+            text=self.response_text,
+            provider="fake",
+            model="fake-model",
+            provider_request_id="fake-req-1",
+        )
+
+
 def create_llm_client(settings: Settings) -> LLMClient:
     """Build the configured LLM client after validating provider-specific settings."""
+    if settings.llm_provider == "fake":
+        return FakeLLMClient()
     if settings.llm_provider != "openai":
         raise LLMConfigurationError(f"Unsupported LLM provider: {settings.llm_provider}.")
     if not settings.openai_api_key:

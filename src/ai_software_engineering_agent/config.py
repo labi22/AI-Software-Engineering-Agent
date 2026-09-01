@@ -24,13 +24,15 @@ class Settings:
     database_url: str | None = None
     chunk_size_lines: int = 60
     chunk_overlap_lines: int = 15
+    agent_max_steps: int = 10
+    agent_step_timeout_seconds: float = 30.0
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "Settings":
         environment = os.environ if environ is None else environ
         provider = environment.get("LLM_PROVIDER", "openai").strip().lower()
-        if provider != "openai":
-            raise ValueError("LLM_PROVIDER must be 'openai'.")
+        if provider not in ("openai", "fake"):
+            raise ValueError("LLM_PROVIDER must be 'openai' or 'fake'.")
 
         try:
             timeout = float(environment.get("LLM_REQUEST_TIMEOUT_SECONDS", "30"))
@@ -46,8 +48,11 @@ class Settings:
         )
 
         embedding_provider = environment.get("EMBEDDING_PROVIDER", "openai").strip().lower()
+        if embedding_provider not in ("openai", "fake"):
+            raise ValueError("EMBEDDING_PROVIDER must be 'openai' or 'fake'.")
+            
         embedding_model = environment.get("EMBEDDING_MODEL", "text-embedding-3-small").strip()
-        
+
         try:
             embedding_dimension = int(environment.get("EMBEDDING_DIMENSION", "1536"))
         except ValueError as error:
@@ -64,6 +69,16 @@ class Settings:
         except ValueError as error:
             raise ValueError("CHUNK_SIZE_LINES and CHUNK_OVERLAP_LINES must be integers.") from error
 
+        try:
+            agent_max_steps = int(environment.get("AGENT_MAX_STEPS", "10"))
+        except ValueError as error:
+            raise ValueError("AGENT_MAX_STEPS must be an integer.") from error
+
+        try:
+            agent_step_timeout = float(environment.get("AGENT_STEP_TIMEOUT_SECONDS", "30.0"))
+        except ValueError as error:
+            raise ValueError("AGENT_STEP_TIMEOUT_SECONDS must be a number.") from error
+
         return cls(
             llm_provider=provider,
             llm_model=environment.get("LLM_MODEL", "gpt-5.2").strip(),
@@ -77,4 +92,6 @@ class Settings:
             database_url=db_url,
             chunk_size_lines=chunk_size,
             chunk_overlap_lines=chunk_overlap,
+            agent_max_steps=agent_max_steps,
+            agent_step_timeout_seconds=agent_step_timeout,
         )

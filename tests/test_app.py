@@ -187,14 +187,38 @@ def test_ingest_and_rag_query_flow(tmp_path: Path):
     assert data["chunks_created"] >= 1
     assert data["status"] == "success"
 
-    # 2. Query RAG endpoint
+    # 2. Query RAG endpoint with hybrid retrieval and debug info
     query_resp = client.post(
         "/v1/rag/query",
-        json={"query": "How is NPV computed?", "repo_id": "test-repo", "top_k": 3},
+        json={
+            "query": "How is NPV computed?",
+            "repo_id": "test-repo",
+            "top_k": 3,
+            "retrieval_strategy": "hybrid",
+            "include_debug_info": True,
+            "path_patterns": ["*.py"],
+        },
     )
     assert query_resp.status_code == 200
     q_data = query_resp.json()
     assert "NPV is computed" in q_data["answer"]
     assert len(q_data["citations"]) >= 1
     assert q_data["citations"][0]["file_path"] == "calc.py"
+    assert q_data["citations"][0]["is_verified"] is True
     assert len(q_data["retrieved_chunks"]) >= 1
+    assert q_data["retrieved_chunks"][0]["debug_info"] is not None
+    assert q_data["strategy_used"] == "hybrid"
+
+
+def test_rag_query_rejects_invalid_strategy():
+    app = create_app(
+        settings=fake_settings(),
+        client_factory=lambda _: FakeLLMClient(),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/rag/query",
+        json={"query": "test query", "retrieval_strategy": "invalid-strategy"},
+    )
+    assert response.status_code == 422
