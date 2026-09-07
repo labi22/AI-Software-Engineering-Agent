@@ -26,6 +26,8 @@ class Settings:
     chunk_overlap_lines: int = 15
     agent_max_steps: int = 10
     agent_step_timeout_seconds: float = 30.0
+    tool_timeout_seconds: float = 30.0
+    tool_max_output_chars: int = 8000
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -79,6 +81,16 @@ class Settings:
         except ValueError as error:
             raise ValueError("AGENT_STEP_TIMEOUT_SECONDS must be a number.") from error
 
+        try:
+            tool_timeout = float(environment.get("TOOL_TIMEOUT_SECONDS", "30.0"))
+        except ValueError as error:
+            raise ValueError("TOOL_TIMEOUT_SECONDS must be a number.") from error
+
+        try:
+            tool_max_output = int(environment.get("TOOL_MAX_OUTPUT_CHARS", "8000"))
+        except ValueError as error:
+            raise ValueError("TOOL_MAX_OUTPUT_CHARS must be an integer.") from error
+
         return cls(
             llm_provider=provider,
             llm_model=environment.get("LLM_MODEL", "gpt-5.2").strip(),
@@ -94,4 +106,6 @@ class Settings:
             chunk_overlap_lines=chunk_overlap,
             agent_max_steps=agent_max_steps,
             agent_step_timeout_seconds=agent_step_timeout,
+            tool_timeout_seconds=tool_timeout,
+            tool_max_output_chars=tool_max_output,
         )

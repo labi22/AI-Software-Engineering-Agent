@@ -132,41 +132,45 @@ Interview checkpoints:
 
 ## Day 8-9: Safe Engineering Tools
 
-- [ ] Implement `list_files`.
-- [ ] Implement `search_code`.
-- [ ] Implement `read_file`.
-- [ ] Implement `run_python`.
-- [ ] Implement `run_tests`.
-- [ ] Implement `git_diff`.
-- [ ] Add input schemas and validation for every tool.
-- [ ] Add path safety checks to keep tools inside approved target repositories.
-- [ ] Add timeouts and output limits.
-- [ ] Add error handling and tool-result normalization.
-- [ ] Add tests for safe and unsafe tool inputs.
+- [x] Implement `list_files`.
+- [x] Implement `search_code`.
+- [x] Implement `read_file`.
+- [x] Implement `run_python`.
+- [x] Implement `run_tests`.
+- [x] Implement `git_diff`.
+- [x] Add input schemas and validation for every tool.
+- [x] Add path safety checks to keep tools inside approved target repositories.
+- [x] Add timeouts and output limits.
+- [x] Add error handling and tool-result normalization.
+- [x] Add tests for safe and unsafe tool inputs.
 
 Acceptance checks:
-- [ ] Agent can find relevant code, read it, and explain it.
-- [ ] Agent can run tests and summarize failures.
-- [ ] Unsafe paths and commands are rejected.
+- [x] Agent can find relevant code, read it, and explain it.
+- [x] Agent can run tests and summarize failures.
+- [x] Unsafe paths and commands are rejected.
 
 Interview checkpoints:
-- [ ] Explain function calling/tool schemas.
-- [ ] Explain safe execution boundaries and failure handling.
+- [x] Explain function calling/tool schemas.
+- [x] Explain safe execution boundaries and failure handling.
 
 ## Day 10: MCP
 
-- [ ] Learn MCP concepts through this project context.
-- [ ] Decide whether to expose repository tools through an MCP server, MCP client, or both.
-- [ ] Implement one small MCP integration.
-- [ ] Document why standardized tool/resource interfaces matter.
+- [x] Learn MCP concepts through this project context.
+- [x] Decide whether to expose repository tools through an MCP server, MCP client, or both (Decision: Implement dual-mode architecture: MCPServer + MCPClient/ToolAdapter).
+- [x] Implement standard JSON-RPC 2.0 protocol models (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`).
+- [x] Implement `MCPServer` exposing safe engineering tools (`list_files`, `read_file`, `search_code`, `run_python`, `run_tests`, `git_diff`) and repository resources (`repo://`).
+- [x] Implement `MCPClient` and `MCPToolAdapter` allowing the autonomous `Agent` to consume external/internal MCP tools dynamically into its `ToolRegistry`.
+- [x] Add stdio transport CLI runner and FastAPI endpoint (`POST /v1/mcp`) for external client integration (Claude Desktop, Cursor, IDEs).
+- [x] Add comprehensive test suite (`tests/test_mcp.py`) verifying handshake, tool calling, resource reading, and agent integration.
+- [x] Document why standardized tool/resource interfaces matter and prepare interview questions/answers.
 
 Acceptance checks:
-- [ ] Demonstrate one MCP-backed capability.
-- [ ] Explain MCP without relying on abstract jargon.
+- [x] Demonstrate one MCP-backed capability (agent calling safe tools via MCP; external client querying repository tools/resources).
+- [x] Explain MCP without relying on abstract jargon.
 
 Interview checkpoints:
-- [ ] Explain what problem MCP solves.
-- [ ] Explain when MCP is useful versus ordinary function calling.
+- [x] Explain what problem MCP solves.
+- [x] Explain when MCP is useful versus ordinary function calling.
 
 ## Day 11: Evaluation
 
@@ -267,7 +271,9 @@ Acceptance checks:
  - [x] Implement BM25 lexical index, Reciprocal Rank Fusion (RRF), and SymbolBoostReranker.
  - [x] Implement citation source verification and retrieval rank debug tracing.
  - [x] Day 7: Implement Agent Loop, State Management, Actions, Observations, Tool Selection, and `POST /v1/agent/run` endpoint.
- - [ ] Day 8-9: Implement safe engineering tools: `list_files`, `search_code`, `read_file`, `run_python`, `run_tests`, `git_diff` with path safety checks, timeouts, and output limits.
+ - [x] Day 8-9: Implement safe engineering tools: `list_files`, `search_code`, `read_file`, `run_python`, `run_tests`, `git_diff` with path safety checks, timeouts, and output limits.
+ - [x] Day 10: Model Context Protocol (MCP) — `MCPServer`, `MCPClient`, `MCPToolAdapter`, `repo://` resources, JSON-RPC 2.0 engine, stdio transport, and `POST /v1/mcp` endpoint. 107/107 tests passing.
+ - [ ] Day 11: Evaluation pipeline — retrieval metrics (Recall@K, MRR), answer evaluation rubric (relevance, faithfulness, citation quality), and failure case analysis.
 
 ## Decision Log
 
@@ -282,6 +288,8 @@ Acceptance checks:
 | 2026-08-25 | Use PostgreSQL + pgvector from the first RAG milestone. | The project should build directly on its chosen durable vector storage layer. |
 | 2026-08-27 | Use `<tool_call>` XML tags for tool invocation instead of OpenAI function-calling JSON mode. | Keeps the agent portable across LLM providers and avoids SDK-specific structured output requirements. |
 | 2026-08-27 | Fix: check `is_done()` before `add_observation_step()` in the agent loop. | `add_observation_step()` overwrites status to `OBSERVING`, masking the `FINISHED` status set by `final_answer` inside `execute()`. The `already_done` guard preserves terminal state across the observation recording boundary. |
+| 2026-09-03 | Implement path boundary containment via canonical path resolution (`resolve().is_relative_to()`). | Blocks directory traversal (`../`), null-byte injection, and symlink breakouts to protect host filesystem. |
+| 2026-09-05 | Implement self-contained, zero-dependency JSON-RPC 2.0 MCP protocol engine with dual-mode architecture (Server + Client/Adapter). | Demonstrates deep protocol mastery for interviews, avoids brittle external SDK dependencies, enables native offline testing, and allows our Agent to seamlessly consume both internal and external MCP tools. |
 
 ## Open Questions
 

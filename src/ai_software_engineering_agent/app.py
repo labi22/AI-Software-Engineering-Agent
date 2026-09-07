@@ -18,14 +18,17 @@ from .embeddings import (
     EmbeddingProviderError,
     create_embedding_client,
 )
-from .ingestion import IngestionError, RepositoryAccessError
+from .engineering_tools import EngineeringToolContext, create_engineering_tool_registry
+from .ingestion import IngestionError, RepositoryAccessError, validate_repository_path
 from .llm import LLMClient, LLMConfigurationError, LLMProviderError, LLMRequest, create_llm_client
 from .models import (
     MetadataFilter,
     RepositorySpec,
     RetrievalStrategy,
 )
+from .mcp import INVALID_PARAMS, PARSE_ERROR, JSONRPCError, JSONRPCResponse, MCPServer
 from .rag import RAGError, RAGService
+from .safety import PathSecurityError
 from .tools import create_default_tool_registry
 from .vector_store import (
     VectorStore,
@@ -148,6 +151,8 @@ class AgentRunRequest(BaseModel):
     """Request payload to run the ReAct agent on a task."""
 
     task: str = Field(min_length=1, max_length=10_000, description="The task or question for the agent to solve")
+    repository_path: str | None = Field(default=None, description="Optional local repository path to bind safe engineering tools to")
+    repo_id: str | None = Field(default=None, description="Optional repository ID")
     max_steps: int = Field(default=10, ge=1, le=30, description="Maximum number of reasoning/action steps")
 
 
@@ -347,7 +352,28 @@ def create_app(
             ) from error
 
         rag_svc = _get_rag_service(request)
-        tool_registry = create_default_tool_registry(rag_svc)
+        if payload.repository_path:
+            try:
+                repo_root = validate_repository_path(
+                    payload.repository_path,
+                    allowed_roots=request.app.state.settings.allowed_repository_roots,
+                )
+            except (RepositoryAccessError, PathSecurityError) as error:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid repository path: {error}",
+                ) from error
+
+            eng_context = EngineeringToolContext(
+                repo_root=repo_root,
+                allowed_roots=request.app.state.settings.allowed_repository_roots,
+                default_timeout_seconds=request.app.state.settings.tool_timeout_seconds,
+                max_output_chars=request.app.state.settings.tool_max_output_chars,
+                rag_service=rag_svc,
+            )
+            tool_registry = create_engineering_tool_registry(eng_context)
+        else:
+            tool_registry = create_default_tool_registry(rag_svc)
 
         agent = Agent(
             llm_client=llm_client,
@@ -413,6 +439,58 @@ def create_app(
             steps=steps_data,
             citations=citations_data,
         )
+
+    @app.post("/v1/mcp")
+    async def handle_mcp_request(
+        request: Request,
+        repository_path: str | None = None,
+        repo_id: str | None = None,
+        read_only: bool = False,
+    ):
+        """Standard JSON-RPC 2.0 endpoint for Model Context Protocol (MCP) clients."""
+        try:
+            raw_body = await request.json()
+        except Exception as exc:
+            return JSONRPCResponse(
+                id=None,
+                error=JSONRPCError(code=PARSE_ERROR, message=f"Parse error: {exc}"),
+            ).to_dict()
+
+        settings: Settings = request.app.state.settings
+        repo_path_str = repository_path or request.headers.get("X-Repository-Path")
+        repo_id_str = repo_id or request.headers.get("X-Repo-ID") or "default"
+        is_read_only = read_only or (request.headers.get("X-Read-Only", "").lower() == "true")
+
+        tool_context = None
+        if repo_path_str:
+            try:
+                safe_repo_root = validate_repository_path(repo_path_str, settings.allowed_repository_roots)
+                rag_service = _get_rag_service(request)
+                tool_context = EngineeringToolContext(
+                    repo_root=safe_repo_root,
+                    allowed_roots=settings.allowed_repository_roots,
+                    default_timeout_seconds=float(settings.agent_step_timeout_seconds),
+                    rag_service=rag_service,
+                )
+            except (RepositoryAccessError, IngestionError, PathSecurityError) as err:
+                req_id = raw_body.get("id") if isinstance(raw_body, dict) else None
+                return JSONRPCResponse(
+                    id=req_id,
+                    error=JSONRPCError(code=INVALID_PARAMS, message=f"Invalid repository context: {err}"),
+                ).to_dict()
+
+        server = MCPServer(
+            tool_context=tool_context,
+            repo_id=repo_id_str,
+            read_only=is_read_only,
+        )
+
+        response = await server.handle_request(raw_body)
+        if response is None:
+            from fastapi.responses import Response
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        return response
 
     return app
 

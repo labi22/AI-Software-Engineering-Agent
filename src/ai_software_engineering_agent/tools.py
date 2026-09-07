@@ -273,3 +273,21 @@ def create_default_tool_registry(rag_service: Any) -> ToolRegistry:
     registry.register("answer_query", create_answer_query_handler(rag_service), ANSWER_QUERY_SCHEMA)
     registry.register("final_answer", create_final_answer_handler(), FINAL_ANSWER_SCHEMA)
     return registry
+
+
+# Lazy imports for safe engineering tools to avoid circular dependencies
+def get_engineering_tool_registry(
+    repo_root: Any,
+    allowed_roots: tuple[Any, ...] = (),
+    rag_service: Any | None = None,
+) -> ToolRegistry:
+    """Convenience factory creating a ToolRegistry with all 6 safe engineering tools."""
+    from .engineering_tools import EngineeringToolContext, create_engineering_tool_registry
+
+    context = EngineeringToolContext(
+        repo_root=repo_root,
+        allowed_roots=allowed_roots,
+        rag_service=rag_service,
+    )
+    return create_engineering_tool_registry(context)
+

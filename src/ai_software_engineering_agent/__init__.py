@@ -1,9 +1,20 @@
 """AI Software Engineering Agent package."""
 
-from .agent import AgentPlan, build_plan, extract_keywords
+from .agent import Agent, AgentError, AgentPlan, build_plan, extract_keywords
+from .agent_state import AgentResult, AgentState, AgentStatus, AgentStep, Observation, ToolCall
 from .app import create_app
 from .config import Settings
 from .embeddings import EmbeddingClient, FakeEmbeddingClient, OpenAIEmbeddingClient, create_embedding_client
+from .engineering_tools import (
+    EngineeringToolContext,
+    create_engineering_tool_registry,
+    create_git_diff_handler,
+    create_list_files_handler,
+    create_read_file_handler,
+    create_run_python_handler,
+    create_run_tests_handler,
+    create_search_code_handler,
+)
 from .ingestion import chunk_document, discover_files, parse_file, validate_repository_path
 from .lexical import BM25Index, CodeTokenizer
 from .llm import FakeLLMClient, LLMClient, LLMRequest, LLMResponse, OpenAIResponsesClient, create_llm_client
@@ -21,27 +32,77 @@ from .models import (
 )
 from .rag import RAGService, extract_citations, format_context_prompt, validate_citations
 from .retrieval import HybridRetriever, QueryExpander, SymbolBoostReranker, reciprocal_rank_fusion
+from .mcp import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    MCP_PROTOCOL_VERSION,
+    METHOD_NOT_FOUND,
+    PARSE_ERROR,
+    JSONRPCError,
+    JSONRPCRequest,
+    JSONRPCResponse,
+    MCPClient,
+    MCPError,
+    MCPResource,
+    MCPServer,
+    MCPTool,
+    MCPToolAdapter,
+    guess_mime_type,
+    run_stdio_server,
+)
+from .safety import (
+    CommandSecurityError,
+    ExecutionTimeoutError,
+    PathSecurityError,
+    sanitize_git_ref,
+    sanitize_pytest_args,
+    truncate_output,
+    validate_safe_path,
+)
+from .tools import ToolHandler, ToolRegistry, ToolSchema, create_default_tool_registry
 from .vector_store import InMemoryVectorStore, PgVectorStore, VectorStore, create_vector_store
 
 __all__ = [
+    "Agent",
+    "AgentError",
     "AgentPlan",
+    "AgentResult",
+    "AgentState",
+    "AgentStatus",
+    "AgentStep",
     "BM25Index",
     "Citation",
     "CodeChunk",
     "CodeTokenizer",
+    "CommandSecurityError",
     "EmbeddingClient",
+    "EngineeringToolContext",
+    "ExecutionTimeoutError",
     "FakeEmbeddingClient",
     "FakeLLMClient",
     "FileDocument",
     "HybridRetriever",
     "InMemoryVectorStore",
     "IngestionSummary",
+    "JSONRPCError",
+    "JSONRPCRequest",
+    "JSONRPCResponse",
     "LLMClient",
     "LLMRequest",
     "LLMResponse",
+    "MCPClient",
+    "MCPError",
+    "MCPResource",
+    "MCPServer",
+    "MCPTool",
+    "MCPToolAdapter",
+    "MCP_PROTOCOL_VERSION",
     "MetadataFilter",
+    "Observation",
     "OpenAIEmbeddingClient",
     "OpenAIResponsesClient",
+    "PathSecurityError",
     "PgVectorStore",
     "QueryExpander",
     "RAGResponse",
@@ -52,12 +113,24 @@ __all__ = [
     "RetrievalStrategy",
     "Settings",
     "SymbolBoostReranker",
+    "ToolCall",
+    "ToolHandler",
+    "ToolRegistry",
+    "ToolSchema",
     "VectorStore",
     "build_plan",
     "chunk_document",
     "create_app",
+    "create_default_tool_registry",
     "create_embedding_client",
+    "create_engineering_tool_registry",
+    "create_git_diff_handler",
+    "create_list_files_handler",
     "create_llm_client",
+    "create_read_file_handler",
+    "create_run_python_handler",
+    "create_run_tests_handler",
+    "create_search_code_handler",
     "create_vector_store",
     "discover_files",
     "extract_citations",
@@ -65,6 +138,10 @@ __all__ = [
     "format_context_prompt",
     "parse_file",
     "reciprocal_rank_fusion",
+    "sanitize_git_ref",
+    "sanitize_pytest_args",
+    "truncate_output",
     "validate_citations",
     "validate_repository_path",
+    "validate_safe_path",
 ]

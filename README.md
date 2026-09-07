@@ -12,6 +12,8 @@ A repository-agnostic AI software engineering assistant that scans, ingests, ind
 - **Metadata Filtering**: Scopes queries by repository ID, file path glob patterns (e.g. `models/*.py`), programming language, or named code symbols only.
 - **Citation Verification & Grounding**: Automatically verifies line-range overlap for LLM citations against retrieved context to flag hallucinations.
 - **ReAct Agent Loop**: Multi-step reasoning agent that selects tools, observes results, and iterates until it has a complete answer — with full step-by-step trace in every response.
+- **Safe Engineering Tools**: Suite of 6 secure tools (`list_files`, `read_file`, `search_code`, `run_python`, `run_tests`, `git_diff`) with canonical path validation, process sandboxing, timeouts, and output limits.
+- **Model Context Protocol (MCP)**: Standards-based JSON-RPC 2.0 interface exposing all engineering tools and repository files to external clients (Claude Desktop, Cursor, IDEs) via `POST /v1/mcp` and a stdio transport loop. The agent can also consume tools from any external MCP server via `MCPClient` + `MCPToolAdapter`.
 - **Provider-Neutral Architecture**: Supports OpenAI (`gpt-5.2`, `text-embedding-3-small`), PostgreSQL with `pgvector`, and 100% offline fake mocks for development/testing.
 
 ## Architecture Overview
@@ -102,7 +104,8 @@ Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/v1/agent/run" `
   -ContentType "application/json" `
   -Body '{
-    "task": "How is zero_rate calculated in the yield curve module? Show me the relevant code and explain the algorithm.",
+    "task": "How is zero_rate calculated in the yield curve module? Show me the relevant code and run the tests to verify it.",
+    "repository_path": "D:/Yield_Curve_Construction_and_Bond_Valuation_&_Risk_Lab",
     "max_steps": 10
   }'
 ```
@@ -210,7 +213,50 @@ Response:
 }
 ```
 
-### 4. Direct Generation
+### 4. Call Tools and Read Resources via MCP
+
+```powershell
+# List available tools
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/v1/mcp" `
+  -ContentType "application/json" `
+  -Headers @{"X-Repository-Path"="D:/bond-lab"; "X-Repo-ID"="bond-lab"} `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+
+# Call a tool
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/v1/mcp" `
+  -ContentType "application/json" `
+  -Headers @{"X-Repository-Path"="D:/bond-lab"; "X-Repo-ID"="bond-lab"} `
+  -Body '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"file_path":"yield_curve/rates.py"}}}'
+
+# List repository resources
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/v1/mcp" `
+  -ContentType "application/json" `
+  -Headers @{"X-Repository-Path"="D:/bond-lab"; "X-Repo-ID"="bond-lab"} `
+  -Body '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
+```
+
+Response (tools/list):
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {"name": "list_files", "description": "List files and directories...", "inputSchema": {...}},
+      {"name": "read_file",  "description": "Read file content...",          "inputSchema": {...}},
+      {"name": "search_code","description": "Perform a fast text or regex grep...", "inputSchema": {...}},
+      {"name": "run_python", "description": "Execute a Python script...",    "inputSchema": {...}},
+      {"name": "run_tests",  "description": "Run the repository test suite...", "inputSchema": {...}},
+      {"name": "git_diff",   "description": "View read-only git diff...",    "inputSchema": {...}}
+    ]
+  }
+}
+```
+
+### 5. Direct Generation
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -245,28 +291,41 @@ Run the full automated test suite offline:
 pytest
 ```
 
-All tests use injected fake LLM clients and in-memory vector stores — no OpenAI API key or database required.
+All tests use injected fake LLM clients and in-memory vector stores — no OpenAI API key or database required. **107 tests, all passing.**
 
 ## Project Structure
 
 ```
 src/ai_software_engineering_agent/
-├── agent.py          # ReAct agent loop, prompt builder, tool call parser
-├── agent_state.py    # AgentStatus, ToolCall, Observation, AgentStep, AgentState, AgentResult
-├── tools.py          # ToolSchema, ToolRegistry, built-in tool handlers
-├── app.py            # FastAPI app, all HTTP endpoints including /v1/agent/run
-├── config.py         # Settings loaded from environment variables
-├── llm.py            # LLM client abstraction (OpenAI adapter + fake)
-├── embeddings.py     # Embedding client abstraction (OpenAI adapter + fake)
-├── rag.py            # RAGService: ingest, retrieve, answer_query, citation validation
-├── retrieval.py      # HybridRetriever, RRF fusion, SymbolBoostReranker, QueryExpander
-├── lexical.py        # CodeTokenizer, BM25Index
-├── ingestion.py      # Repository scanner, AST chunker, sliding-window chunker
-├── models.py         # Shared dataclasses: Citation, CodeChunk, RetrievalResult, etc.
-└── vector_store.py   # VectorStore abstraction (InMemory + pgvector)
+├── agent.py            # ReAct agent loop, prompt builder, tool call parser
+├── agent_state.py      # AgentStatus, ToolCall, Observation, AgentStep, AgentState, AgentResult
+├── tools.py            # ToolSchema, ToolRegistry, built-in tool handlers
+├── engineering_tools.py# 6 safe engineering tools + EngineeringToolContext
+├── mcp.py              # MCPServer, MCPClient, MCPToolAdapter, JSON-RPC 2.0 engine, stdio transport
+├── app.py              # FastAPI app — all HTTP endpoints including /v1/agent/run and /v1/mcp
+├── config.py           # Settings loaded from environment variables
+├── llm.py              # LLM client abstraction (OpenAI adapter + fake)
+├── embeddings.py       # Embedding client abstraction (OpenAI adapter + fake)
+├── rag.py              # RAGService: ingest, retrieve, answer_query, citation validation
+├── retrieval.py        # HybridRetriever, RRF fusion, SymbolBoostReranker, QueryExpander
+├── lexical.py          # CodeTokenizer, BM25Index
+├── ingestion.py        # Repository scanner, AST chunker, sliding-window chunker
+├── models.py           # Shared dataclasses: Citation, CodeChunk, RetrievalResult, etc.
+├── safety.py           # Path confinement, git ref sanitization, pytest arg allowlist
+└── vector_store.py     # VectorStore abstraction (InMemory + pgvector)
 
 tests/
-├── test_agent.py         # Day 1-2: keyword extraction, plan builder
-├── test_agent_loop.py    # Day 7: AgentState, ToolRegistry, Agent loop, /v1/agent/run
-└── test_app.py           # Day 1-6: all other endpoints, settings, LLM adapter
+├── test_agent.py                   # Day 1-2: keyword extraction, plan builder
+├── test_agent_loop.py              # Day 7: AgentState, ToolRegistry, Agent loop, /v1/agent/run
+├── test_agent_tools_integration.py # Day 8-9: end-to-end agent with engineering tools
+├── test_engineering_tools.py       # Day 8-9: list_files, read_file, search_code, run_python, run_tests, git_diff
+├── test_safety.py                  # Day 8-9: path validation, git ref sanitization, pytest arg allowlist
+├── test_mcp.py                     # Day 10: MCPServer, MCPClient, MCPToolAdapter, /v1/mcp endpoint
+├── test_app.py                     # Day 1-6: all other endpoints, settings, LLM adapter
+├── test_citations.py               # Day 5-6: citation verification
+├── test_hybrid_retrieval.py        # Day 5-6: RRF, symbol boost, hybrid retriever
+├── test_ingestion.py               # Day 3-4: chunking, file discovery
+├── test_lexical.py                 # Day 5-6: BM25 index, code tokenizer
+├── test_rag.py                     # Day 3-4: RAGService, ingest, retrieve
+└── test_vector_store.py            # Day 3-4: in-memory and pgvector stores
 ```
