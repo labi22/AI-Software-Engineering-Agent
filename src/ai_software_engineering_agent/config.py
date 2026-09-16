@@ -28,13 +28,16 @@ class Settings:
     agent_step_timeout_seconds: float = 30.0
     tool_timeout_seconds: float = 30.0
     tool_max_output_chars: int = 8000
+    llm_base_url: str | None = None
+    groq_api_key: str | None = None
+    agent_orchestration_engine: str = "custom"
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "Settings":
         environment = os.environ if environ is None else environ
         provider = environment.get("LLM_PROVIDER", "openai").strip().lower()
-        if provider not in ("openai", "fake"):
-            raise ValueError("LLM_PROVIDER must be 'openai' or 'fake'.")
+        if provider not in ("openai", "groq", "ollama", "fake"):
+            raise ValueError("LLM_PROVIDER must be 'openai', 'groq', 'ollama', or 'fake'.")
 
         try:
             timeout = float(environment.get("LLM_REQUEST_TIMEOUT_SECONDS", "30"))
@@ -50,13 +53,19 @@ class Settings:
         )
 
         embedding_provider = environment.get("EMBEDDING_PROVIDER", "openai").strip().lower()
-        if embedding_provider not in ("openai", "fake"):
-            raise ValueError("EMBEDDING_PROVIDER must be 'openai' or 'fake'.")
-            
-        embedding_model = environment.get("EMBEDDING_MODEL", "text-embedding-3-small").strip()
+        if embedding_provider not in ("openai", "fake", "huggingface", "hf", "local"):
+            raise ValueError("EMBEDDING_PROVIDER must be 'openai', 'fake', or 'huggingface'.")
 
+        default_model = (
+            "sentence-transformers/all-MiniLM-L6-v2"
+            if embedding_provider in ("huggingface", "hf", "local")
+            else "text-embedding-3-small"
+        )
+        embedding_model = environment.get("EMBEDDING_MODEL", default_model).strip()
+
+        default_dim = "384" if embedding_provider in ("huggingface", "hf", "local") else "1536"
         try:
-            embedding_dimension = int(environment.get("EMBEDDING_DIMENSION", "1536"))
+            embedding_dimension = int(environment.get("EMBEDDING_DIMENSION", default_dim))
         except ValueError as error:
             raise ValueError("EMBEDDING_DIMENSION must be an integer.") from error
 
@@ -91,6 +100,10 @@ class Settings:
         except ValueError as error:
             raise ValueError("TOOL_MAX_OUTPUT_CHARS must be an integer.") from error
 
+        orchestration_engine = environment.get("AGENT_ORCHESTRATION_ENGINE", "custom").strip().lower()
+        if orchestration_engine not in ("custom", "langgraph"):
+            raise ValueError("AGENT_ORCHESTRATION_ENGINE must be 'custom' or 'langgraph'.")
+
         return cls(
             llm_provider=provider,
             llm_model=environment.get("LLM_MODEL", "gpt-5.2").strip(),
@@ -108,4 +121,7 @@ class Settings:
             agent_step_timeout_seconds=agent_step_timeout,
             tool_timeout_seconds=tool_timeout,
             tool_max_output_chars=tool_max_output,
+            llm_base_url=environment.get("LLM_BASE_URL", "").strip() or None,
+            groq_api_key=environment.get("GROQ_API_KEY") or None,
+            agent_orchestration_engine=orchestration_engine,
         )

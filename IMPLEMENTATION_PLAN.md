@@ -385,11 +385,64 @@ Two bugs in `test_mcp.py` were fixed to align assertions with actual implementat
 
 ---
 
-## Next Milestone: Day 11 — Evaluation Pipeline
+## Day 11 Milestone: Evaluation Pipeline (In Progress)
 
-1. Create 20–30 labelled evaluation questions against Target Repo 1 (bond valuation codebase).
-2. Separate retrieval evaluation (Recall@K, MRR, Precision@K) from answer evaluation.
-3. Implement answer evaluation rubric: relevance, faithfulness, citation quality, hallucination rate.
-4. Run baseline evaluation and document results.
-5. Identify and analyse at least 3 failure cases; create improvement tasks.
-6. Make evaluation repeatable with a single command.
+### Goal
+
+Establish an empirical evaluation harness to measure, benchmark, and improve retrieval and answer generation:
+1. **Decoupled Evaluation Pipeline**: Separate **Retrieval Evaluation** (evaluating how well our search engine surfaces relevant code chunks) from **Answer Evaluation** (evaluating answer faithfulness, relevance, and citation precision).
+2. **Zero-Cost Retrieval Benchmarking**: Computes standard Information Retrieval (IR) metrics—**Hit@1, Hit@3, Hit@5, Recall@K, Precision@K, and MRR (Mean Reciprocal Rank)**—without requiring any LLM API calls or costs.
+3. **Comparative Strategy Evaluation**: Runs side-by-side benchmarks across:
+   - Dense Vector Retrieval (semantic search)
+   - BM25 Lexical Retrieval (keyword/identifier search)
+   - Hybrid Reciprocal Rank Fusion (RRF $k=60$)
+   - Hybrid RRF + Symbol Boost Reranker
+4. **Hardware-Friendly LLM Configuration**: Adds `llm_base_url` support to allow seamless integration with **Groq Free Tier** (fast cloud inference requiring 0 MB of local RAM) or **Ollama** (offline local inference) for generation evaluation.
+5. **Resume-Ready Metrics Table & Failure Analysis**: Generates formatted benchmark reports for portfolio presentation and analyzes 3 edge-case failures.
+
+### Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 Golden Benchmark Dataset                    │
+│                 (data/eval_questions.json)                  │
+│  25 Questions + Ground-Truth Files + Expected Symbols       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               v
+┌─────────────────────────────────────────────────────────────┐
+│                 Evaluation Engine (evaluation.py)           │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ 1. Retrieval Evaluator (0 LLM calls, $0.00 cost)      │  │
+│  │    - Dense Baseline                                   │  │
+│  │    - BM25 Baseline                                    │  │
+│  │    - Hybrid RRF Baseline                              │  │
+│  │    - Hybrid + Symbol Boost Baseline                   │  │
+│  │    Computes: Hit@1, Hit@3, Hit@5, Recall@5, MRR       │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ 2. Answer Evaluator (Optional LLM: Groq / Ollama)     │  │
+│  │    - Faithfulness (Citation line-overlap verification)│  │
+│  │    - Citation Precision                               │  │
+│  │    - Answer Relevance Score                           │  │
+│  └───────────────────────────────────────────────────────┘  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               v
+┌─────────────────────────────────────────────────────────────┐
+│             Output: Resume-Ready Metrics Table              │
+│                 & Failure Analysis Report                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Retrieval Metrics Formulated
+
+| Metric | Formula | What It Proves in an Interview |
+| --- | --- | --- |
+| **Hit@K** | $\frac{1}{\|Q\|} \sum_{i=1}^{\|Q\|} \mathbb{I}(\text{relevant chunk in top } K)$ | Baseline check: Did the user find what they were looking for anywhere in the top $K$ results? |
+| **Recall@K** | $\frac{\|\text{Retrieved}_K \cap \text{Relevant}\|}{\|\text{Relevant}\|}$ | Completeness: Did the retriever pull in all necessary context needed to answer the question? |
+| **Precision@K** | $\frac{\|\text{Retrieved}_K \cap \text{Relevant}\|}{K}$ | Cleanliness: Did the retriever avoid polluting the LLM context window with noisy irrelevant code? |
+| **MRR** | $\frac{1}{\|Q\|} \sum_{i=1}^{\|Q\|} \frac{1}{\text{rank}_i}$ | Ranking Quality: How close to the top (rank 1) was the primary ground-truth file? |
+

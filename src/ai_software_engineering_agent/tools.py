@@ -52,6 +52,20 @@ class ToolRegistry:
         """Return all registered tool names."""
         return list(self._handlers.keys())
 
+    def to_openai_tools(self) -> list[dict[str, Any]]:
+        """Convert registered schemas to OpenAI/Groq Chat Completions function tools."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": schema.name,
+                    "description": schema.description,
+                    "parameters": schema.parameters,
+                },
+            }
+            for schema in self._schemas.values()
+        ]
+
     def format_for_prompt(self) -> str:
         """Render tool schemas as a text block for the LLM system prompt."""
         if not self._schemas:
@@ -170,7 +184,8 @@ FINAL_ANSWER_SCHEMA = ToolSchema(
     description=(
         "Submit your final answer to the user's task. Call this tool when you have "
         "gathered enough information to provide a complete response. This ends the "
-        "agent loop."
+        "agent loop. You MUST pass the answer as a JSON object with an 'answer' key — "
+        "never place raw text directly as the arguments value."
     ),
     parameters={
         "type": "object",
@@ -290,4 +305,3 @@ def get_engineering_tool_registry(
         rag_service=rag_service,
     )
     return create_engineering_tool_registry(context)
-

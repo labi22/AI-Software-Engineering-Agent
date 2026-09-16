@@ -113,6 +113,10 @@ SEARCH_CODE_SCHEMA = ToolSchema(
                 "type": "string",
                 "description": "Literal string or regular expression pattern to search for.",
             },
+            "query": {
+                "type": "string",
+                "description": "Plain-text search query; an alias for pattern.",
+            },
             "is_regex": {
                 "type": "boolean",
                 "description": "Whether the pattern is a regular expression (default: false).",
@@ -130,7 +134,9 @@ SEARCH_CODE_SCHEMA = ToolSchema(
                 "description": "Maximum number of matching lines to return (default: 30, max: 100).",
             },
         },
-        "required": ["pattern"],
+        # Either ``pattern`` or ``query`` is accepted.  Native function-calling
+        # models commonly choose ``query`` for search tools.
+        "required": [],
     },
 )
 
@@ -374,9 +380,9 @@ def create_search_code_handler(context: EngineeringToolContext) -> ToolHandler:
     """Create search_code handler for literal or regex grep search across repository files."""
 
     async def search_code_handler(arguments: dict[str, Any], state: AgentState) -> str:
-        pattern = arguments.get("pattern", "")
+        pattern = arguments.get("pattern") or arguments.get("query", "")
         if not pattern:
-            return "Error: 'pattern' argument is required."
+            return "Error: 'pattern' or 'query' argument is required."
 
         is_regex = bool(arguments.get("is_regex", False))
         path_pattern = arguments.get("path_pattern", "")

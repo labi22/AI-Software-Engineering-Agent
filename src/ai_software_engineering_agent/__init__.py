@@ -15,6 +15,26 @@ from .engineering_tools import (
     create_run_tests_handler,
     create_search_code_handler,
 )
+from .evaluation import (
+    AnswerEvalMetrics,
+    EvalQuestion,
+    GenerationBenchmarkResult,
+    PerQueryGenerationResult,
+    PerQueryRetrievalResult,
+    RetrievalMetrics,
+    StrategyBenchmarkResult,
+    compute_hit_at_k,
+    compute_mrr,
+    compute_precision_at_k,
+    compute_recall_at_k,
+    evaluate_citations_faithfulness,
+    evaluate_generation,
+    evaluate_retrieval_strategy,
+    format_benchmark_markdown_table,
+    format_generation_markdown_table,
+    load_eval_dataset,
+    run_comparative_retrieval_benchmark,
+)
 from .ingestion import chunk_document, discover_files, parse_file, validate_repository_path
 from .lexical import BM25Index, CodeTokenizer
 from .llm import FakeLLMClient, LLMClient, LLMRequest, LLMResponse, OpenAIResponsesClient, create_llm_client
@@ -141,7 +161,20 @@ __all__ = [
     "sanitize_git_ref",
     "sanitize_pytest_args",
     "truncate_output",
-    "validate_citations",
     "validate_repository_path",
     "validate_safe_path",
+    "evaluate_citations_faithfulness",
+    "evaluate_generation",
+    "evaluate_retrieval_strategy",
+    "format_benchmark_markdown_table",
+    "format_generation_markdown_table",
+    "load_eval_dataset",
+    "run_comparative_retrieval_benchmark",
+    "AnswerEvalMetrics",
+    "EvalQuestion",
+    "GenerationBenchmarkResult",
+    "PerQueryGenerationResult",
+    "PerQueryRetrievalResult",
+    "RetrievalMetrics",
+    "StrategyBenchmarkResult",
 ]

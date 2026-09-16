@@ -116,6 +116,9 @@ class Agent:
         if not task or not task.strip():
             raise AgentError("Task text cannot be empty.")
 
+        if self.settings.llm_provider == "groq":
+            return await self._run_with_native_tools(task)
+
         state = AgentState(task=task, max_steps=self.max_steps)
         system_prompt = self._build_system_prompt()
 
@@ -197,6 +200,107 @@ class Agent:
             result.status, result.total_steps, result.duration_ms,
         )
         return result
+
+    async def _run_with_native_tools(self, task: str) -> AgentResult:
+        """Run Groq's documented local function-calling loop.
+
+        Groq's GPT-OSS models emit native function calls, so tool schemas must be
+        supplied in the API ``tools`` field rather than embedded only as prompt text.
+        """
+        state = AgentState(task=task, max_steps=self.max_steps)
+        messages: list[dict[str, object]] = [
+            {"role": "system", "content": self._build_native_tool_system_prompt()},
+            {"role": "user", "content": task},
+        ]
+        native_tools = self.tool_registry.to_openai_tools()
+
+        while not state.is_done():
+            if not state.has_budget():
+                state.fail(f"Step limit exceeded ({self.max_steps} steps). The agent could not complete the task within the allowed budget.")
+                break
+
+            try:
+                llm_response = await self.llm_client.generate(
+                    LLMRequest(prompt=task, messages=messages, tools=native_tools)
+                )
+            except LLMConfigurationError:
+                raise
+            except Exception as exc:
+                logger.error("LLM call failed at step %d: %s", state.current_step + 1, exc)
+                state.fail(f"LLM generation error: {exc}")
+                break
+
+            if not llm_response.tool_calls:
+                answer = llm_response.text.strip()
+                if not answer:
+                    # This typically means the model exhausted its token budget
+                    # during reasoning and produced no visible output.  Log the
+                    # provider so the operator knows which limit to raise.
+                    logger.error(
+                        "Step %d: %s returned empty message (no text, no tool calls). "
+                        "The model likely ran out of output tokens during reasoning.",
+                        state.current_step + 1,
+                        self.settings.llm_provider,
+                    )
+                    state.fail(
+                        "The model returned an empty response — it likely ran out of output tokens. "
+                        "Try a simpler query or increase max_completion_tokens."
+                    )
+                    break
+                state.add_thinking_step(answer)
+                state.finish(answer)
+                break
+
+            reasoning = llm_response.text.strip() or "The model requested a tool call."
+            state.add_thinking_step(reasoning)
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": llm_response.text or None,
+                    "tool_calls": [
+                        {
+                            "id": call.call_id,
+                            "type": "function",
+                            "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                        }
+                        for call in llm_response.tool_calls
+                    ],
+                }
+            )
+
+            for call in llm_response.tool_calls:
+                tool_call = ToolCall(tool_name=call.name, arguments=call.arguments, call_id=call.call_id)
+                state.add_action_step(tool_call)
+                observation = await self.tool_registry.execute(tool_call, state)
+                messages.append(
+                    {"role": "tool", "tool_call_id": call.call_id, "content": observation.content}
+                )
+                if not state.is_done():
+                    state.add_observation_step(observation)
+                if state.is_done():
+                    break
+
+        answer = state.final_answer or "The agent could not produce an answer."
+        return AgentResult(
+            task=task,
+            answer=answer,
+            steps=state.steps,
+            total_steps=state.current_step,
+            status=state.status.value,
+            duration_ms=state.elapsed_ms(),
+            citations=state.citations,
+        )
+
+    def _build_native_tool_system_prompt(self) -> str:
+        """Instructions for providers that receive schemas through native function calling."""
+        return (
+            "You are an expert AI software engineering agent. Use the provided local tools "
+            "to inspect the codebase when needed. Call final_answer only when you have a "
+            "complete answer. Cite file paths and line numbers when the tool results provide them.\n\n"
+            "IMPORTANT: When calling final_answer, you MUST pass your response as valid JSON "
+            'with an \"answer\" key, for example: {"answer": "your answer text here"}. '
+            "Never place raw text or markdown directly as the arguments value."
+        )
 
     def _build_system_prompt(self) -> str:
         """Construct the system prompt with tool schemas and ReAct instructions."""

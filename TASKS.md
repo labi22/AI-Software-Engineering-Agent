@@ -174,22 +174,23 @@ Interview checkpoints:
 
 ## Day 11: Evaluation
 
-- [ ] Create 20-30 Target Repo 1 evaluation questions.
-- [ ] Label expected relevant files/chunks where possible.
-- [ ] Separate retrieval evaluation from answer evaluation.
-- [ ] Implement retrieval metrics such as Recall@K and MRR.
-- [ ] Implement answer evaluation rubric for relevance, faithfulness, and citation quality.
-- [ ] Run evaluation and save results.
-- [ ] Inspect failures and create improvement tasks.
+- [x] Create 20-25 Target Repo 1 evaluation questions with labeled expected files and symbols (`data/eval_questions.json`).
+- [x] Separate retrieval evaluation from answer evaluation (Decoupled architecture).
+- [x] Implement retrieval metrics in `evaluation.py`: Hit@K (1, 3, 5), Recall@K, Precision@K, and MRR (Mean Reciprocal Rank).
+- [x] Implement comparative benchmark runner comparing `dense`, `bm25`, and `hybrid` (RRF + Symbol Boost) side-by-side.
+- [x] Implement answer evaluation rubric (faithfulness via citation interval verification, relevance, and citation precision).
+- [x] Add `llm_base_url` configuration to `Settings` / `llm.py` to support Groq Free Tier / Ollama / OpenAI interchangeably.
+- [x] Add evaluation test suite (`tests/test_evaluation.py`) verifying metric formulas and benchmark execution.
+- [x] Run evaluation on Target Repo 1, generate resume-ready markdown table, inspect failures, and document failure analysis (`eval_results.md`).
 
 Acceptance checks:
-- [ ] Evaluation can be run repeatedly.
-- [ ] Results are documented in a readable format.
-- [ ] At least 3 failure cases are analyzed.
+- [x] Evaluation can be run repeatedly via CLI or API.
+- [x] Comparative results (Dense vs BM25 vs Hybrid) are documented in a readable markdown report.
+- [x] At least 3 failure cases are analyzed with root causes and remediation notes.
 
 Interview checkpoints:
-- [ ] Explain how to evaluate a RAG system.
-- [ ] Explain grounding, faithfulness, latency, cost, and reliability trade-offs.
+- [x] Explain how to evaluate a RAG system (separating retrieval metrics from generation metrics).
+- [x] Explain grounding, faithfulness, latency, cost, and reliability trade-offs.
 
 ## Day 12: API, Docker, Configuration, Logging
 
@@ -248,8 +249,8 @@ Acceptance checks:
 
 ## Backlog
 
-- [ ] Add LangGraph after the custom agent loop is understood.
-- [ ] Add local Hugging Face embeddings if time permits.
+- [x] Add LangGraph after the custom agent loop is understood.
+- [x] Add local Hugging Face embeddings if time permits.
 - [ ] Add support for remote GitHub repository ingestion.
 - [ ] Add more language parsers beyond Python.
 - [ ] Add generated unit test workflow.
@@ -272,8 +273,10 @@ Acceptance checks:
  - [x] Implement citation source verification and retrieval rank debug tracing.
  - [x] Day 7: Implement Agent Loop, State Management, Actions, Observations, Tool Selection, and `POST /v1/agent/run` endpoint.
  - [x] Day 8-9: Implement safe engineering tools: `list_files`, `search_code`, `read_file`, `run_python`, `run_tests`, `git_diff` with path safety checks, timeouts, and output limits.
- - [x] Day 10: Model Context Protocol (MCP) — `MCPServer`, `MCPClient`, `MCPToolAdapter`, `repo://` resources, JSON-RPC 2.0 engine, stdio transport, and `POST /v1/mcp` endpoint. 107/107 tests passing.
- - [ ] Day 11: Evaluation pipeline — retrieval metrics (Recall@K, MRR), answer evaluation rubric (relevance, faithfulness, citation quality), and failure case analysis.
+ - [x] Day 11: Evaluation pipeline — retrieval metrics (Hit@K, Recall@K, Precision@K, MRR), comparative benchmarks (Dense vs BM25 vs Hybrid), and answer evaluation. 117/117 tests passing.
+ - [x] Backlog Task 1: Add LangGraph orchestration engine with StateGraph, safe tool adapters, memory checkpointing, and side-by-side execution mode. 131/131 tests passing.
+ - [x] Backlog Task 2: Add local Hugging Face embeddings (sentence-transformers), config support, and comparative benchmark evaluation. 137/137 tests passing (Dense Hit@5 leaped from 24% to 100%, MRR from 0.143 to 0.960).
+ - [ ] Day 12: API, Docker, Configuration, Logging — Dockerfile, docker-compose, structured logging, health checks, and production readiness.
 
 ## Decision Log
 
@@ -290,6 +293,9 @@ Acceptance checks:
 | 2026-08-27 | Fix: check `is_done()` before `add_observation_step()` in the agent loop. | `add_observation_step()` overwrites status to `OBSERVING`, masking the `FINISHED` status set by `final_answer` inside `execute()`. The `already_done` guard preserves terminal state across the observation recording boundary. |
 | 2026-09-03 | Implement path boundary containment via canonical path resolution (`resolve().is_relative_to()`). | Blocks directory traversal (`../`), null-byte injection, and symlink breakouts to protect host filesystem. |
 | 2026-09-05 | Implement self-contained, zero-dependency JSON-RPC 2.0 MCP protocol engine with dual-mode architecture (Server + Client/Adapter). | Demonstrates deep protocol mastery for interviews, avoids brittle external SDK dependencies, enables native offline testing, and allows our Agent to seamlessly consume both internal and external MCP tools. |
+| 2026-09-11 | Decouple Retrieval Evaluation from Generation Evaluation. | Allows empirical benchmarking of information retrieval quality (Recall, Precision, MRR) with $0 cost and zero LLM calls, isolating search defects from generation defects. |
+| 2026-09-16 | Add LangGraph as an alternative orchestration engine alongside custom ReAct loop. | Demonstrates production framework mastery alongside from-scratch loop internals; provides side-by-side benchmarkability with shared safety tool layer and state checkpointing. |
+| 2026-09-16 | Support local Hugging Face embeddings (`sentence-transformers/all-MiniLM-L6-v2`) in RAG pipeline. | Enables 100% offline, zero-cost semantic embedding generation and empirical comparison against hash pseudo-vectors and lexical BM25 baselines. |
 
 ## Open Questions
 

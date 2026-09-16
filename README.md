@@ -291,7 +291,23 @@ Run the full automated test suite offline:
 pytest
 ```
 
-All tests use injected fake LLM clients and in-memory vector stores — no OpenAI API key or database required. **107 tests, all passing.**
+All tests use injected fake LLM clients and in-memory vector stores - no OpenAI API key or database required.
+
+## Generation Evaluation With Groq
+
+Generation evaluation keeps embeddings offline and uses Groq only for answer generation. Set the key in the current PowerShell session; do not add it to a tracked file:
+
+```powershell
+$env:GROQ_API_KEY = "your_groq_api_key"
+.\.venv\Scripts\python.exe scripts\run_eval.py `
+  --repo "C:\Users\saksh\Yield Curve Construction and Bond Valuation & Risk Lab" `
+  --eval-generation `
+  --llm-provider groq `
+  --max-gen-queries 5 `
+  --output eval_results_groq.md
+```
+
+The runner defaults to `openai/gpt-oss-20b` for Groq. Use `--llm-model` to choose another available Groq model.
 
 ## Project Structure
 

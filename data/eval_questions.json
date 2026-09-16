@@ -1,0 +1,177 @@
+[
+  {
+    "id": "q01",
+    "question": "How is a bond priced using discount factors from the yield curve in the bond engine?",
+    "category": "bond_pricing",
+    "expected_files": ["bond_engine/bond_pricer.py"],
+    "expected_symbols": ["price_bond", "Bond"]
+  },
+  {
+    "id": "q02",
+    "question": "Where is the yield to maturity (YTM) of a bond calculated using root finding?",
+    "category": "bond_pricing",
+    "expected_files": ["bond_engine/bond_pricer.py"],
+    "expected_symbols": ["yield_to_maturity"]
+  },
+  {
+    "id": "q03",
+    "question": "How is Macaulay duration computed for coupon-bearing bonds?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/bond_pricer.py"],
+    "expected_symbols": ["macaulay_duration"]
+  },
+  {
+    "id": "q04",
+    "question": "Where is modified duration calculated from Macaulay duration and yield?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/bond_pricer.py"],
+    "expected_symbols": ["modified_duration"]
+  },
+  {
+    "id": "q05",
+    "question": "How is bond convexity computed from coupon cash flows and discount rates?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/bond_pricer.py"],
+    "expected_symbols": ["convexity"]
+  },
+  {
+    "id": "q06",
+    "question": "What class represents a coupon bond and generates its coupon cash flows schedule?",
+    "category": "bond_pricing",
+    "expected_files": ["bond_engine/bond_pricer.py"],
+    "expected_symbols": ["Bond", "cashflows"]
+  },
+  {
+    "id": "q07",
+    "question": "How does KeyRateShockedCurve apply localized basis point shocks to specific key rate tenors?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/key_rate_shock.py"],
+    "expected_symbols": ["KeyRateShockedCurve"]
+  },
+  {
+    "id": "q08",
+    "question": "Where is key rate duration (KRD) calculated by bumping zero rates at individual maturities?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/key_rate_shock.py"],
+    "expected_symbols": ["key_rate_duration"]
+  },
+  {
+    "id": "q09",
+    "question": "How is a parallel rate shock curve constructed to simulate shifts across all maturities?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/rate_shock.py"],
+    "expected_symbols": ["ShockedYieldCurve"]
+  },
+  {
+    "id": "q10",
+    "question": "How does ShockedYieldCurve calculate the shocked discount factor for a given maturity t?",
+    "category": "risk_metrics",
+    "expected_files": ["bond_engine/rate_shock.py"],
+    "expected_symbols": ["discount_factor"]
+  },
+  {
+    "id": "q11",
+    "question": "What class manages a portfolio of multiple bonds and computes aggregate market value?",
+    "category": "portfolio",
+    "expected_files": ["bond_engine/portfolio.py"],
+    "expected_symbols": ["BondPortfolio", "price"]
+  },
+  {
+    "id": "q12",
+    "question": "How is the portfolio weighted duration calculated across all holding positions?",
+    "category": "portfolio",
+    "expected_files": ["bond_engine/portfolio.py"],
+    "expected_symbols": ["duration", "BondPortfolio"]
+  },
+  {
+    "id": "q13",
+    "question": "Where is the aggregate portfolio convexity computed from individual bond convexities and weights?",
+    "category": "portfolio",
+    "expected_files": ["bond_engine/portfolio.py"],
+    "expected_symbols": ["convexity", "BondPortfolio"]
+  },
+  {
+    "id": "q14",
+    "question": "How is future value or compounded terminal value calculated for a bond portfolio?",
+    "category": "portfolio",
+    "expected_files": ["bond_engine/portfolio.py"],
+    "expected_symbols": ["future_value"]
+  },
+  {
+    "id": "q15",
+    "question": "Where is the YieldCurve class implemented to interpolate zero rates across maturities?",
+    "category": "yield_curve",
+    "expected_files": ["yield_curve/curve_builder.py"],
+    "expected_symbols": ["YieldCurve"]
+  },
+  {
+    "id": "q16",
+    "question": "How does the YieldCurve class convert a continuously compounded zero rate into a discount factor?",
+    "category": "yield_curve",
+    "expected_files": ["yield_curve/curve_builder.py"],
+    "expected_symbols": ["discount_factor", "rate"]
+  },
+  {
+    "id": "q17",
+    "question": "Where are zero coupon rates converted or calculated from spot yields and maturities?",
+    "category": "yield_curve",
+    "expected_files": ["yield_curve/rates.py"],
+    "expected_symbols": ["zero_rate"]
+  },
+  {
+    "id": "q18",
+    "question": "How is the forward rate between two future maturities t1 and t2 calculated?",
+    "category": "yield_curve",
+    "expected_files": ["yield_curve/rates.py"],
+    "expected_symbols": ["forward_rate"]
+  },
+  {
+    "id": "q19",
+    "question": "Where are instantaneous forward rates calculated from the yield curve derivative?",
+    "category": "yield_curve",
+    "expected_files": ["yield_curve/rates.py"],
+    "expected_symbols": ["instantaneous_forward_rates"]
+  },
+  {
+    "id": "q20",
+    "question": "How are raw Treasury yields loaded from CSV or historical market data files?",
+    "category": "data_loader",
+    "expected_files": ["yield_curve/data_loader.py"],
+    "expected_symbols": ["load_treasury_yields"]
+  },
+  {
+    "id": "q21",
+    "question": "How is the present value of future liabilities calculated in the hedging module?",
+    "category": "portfolio",
+    "expected_files": ["app/hedge_bond.py"],
+    "expected_symbols": ["pv_liabilities"]
+  },
+  {
+    "id": "q22",
+    "question": "Where is key rate duration for a stream of liability cash flows computed?",
+    "category": "risk_metrics",
+    "expected_files": ["app/hedge_bond.py"],
+    "expected_symbols": ["key_rate_duration_liability"]
+  },
+  {
+    "id": "q23",
+    "question": "How does optimize_hedge determine bond portfolio weights to match liability duration and cash flows?",
+    "category": "portfolio",
+    "expected_files": ["app/hedge_bond.py"],
+    "expected_symbols": ["optimize_hedge"]
+  },
+  {
+    "id": "q24",
+    "question": "What local shock curve implementation is used in the liability hedging application?",
+    "category": "portfolio",
+    "expected_files": ["app/hedge_bond.py"],
+    "expected_symbols": ["LocalShockCurve"]
+  },
+  {
+    "id": "q25",
+    "question": "Where is the Streamlit interactive bond portfolio dashboard configured?",
+    "category": "portfolio",
+    "expected_files": ["app/bond_portfolio.py"],
+    "expected_symbols": ["BondPortfolio", "load_treasury_yields"]
+  }
+]

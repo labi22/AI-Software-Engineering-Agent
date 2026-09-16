@@ -128,10 +128,76 @@ class FakeEmbeddingClient:
         return self._hash_to_vector(text)
 
 
+class HuggingFaceEmbeddingClient:
+    """Local Hugging Face embeddings using sentence-transformers."""
+
+    def __init__(
+        self,
+        *,
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        dimension: int = 384,
+        client: Any | None = None,
+    ) -> None:
+        self._model_name = model_name
+        self._dimension = dimension
+        self._model = client
+
+    def _get_model(self) -> Any:
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError as error:
+                raise EmbeddingConfigurationError(
+                    "The sentence-transformers package is not installed. "
+                    "Install it with `pip install sentence-transformers`."
+                ) from error
+            try:
+                self._model = SentenceTransformer(self._model_name)
+            except Exception as error:
+                raise EmbeddingProviderError(
+                    f"Failed to load Hugging Face model '{self._model_name}': {error}"
+                ) from error
+        return self._model
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        model = self._get_model()
+
+        def _encode() -> list[list[float]]:
+            embeddings = model.encode(
+                texts,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            return embeddings.tolist()
+
+        try:
+            return await asyncio.to_thread(_encode)
+        except Exception as error:
+            raise EmbeddingProviderError(
+                f"Hugging Face embedding request failed: {error}"
+            ) from error
+
+    async def embed_query(self, text: str) -> list[float]:
+        embeddings = await self.embed([text])
+        if not embeddings:
+            raise EmbeddingProviderError("No embedding was returned for query.")
+        return embeddings[0]
+
+
 def create_embedding_client(settings: Settings) -> EmbeddingClient:
     """Factory creating the configured embedding client."""
     if settings.embedding_provider == "fake":
         return FakeEmbeddingClient(dimension=settings.embedding_dimension)
+
+    if settings.embedding_provider in ("huggingface", "hf", "local"):
+        return HuggingFaceEmbeddingClient(
+            model_name=settings.embedding_model,
+            dimension=settings.embedding_dimension,
+        )
 
     if settings.embedding_provider == "openai":
         if not settings.openai_api_key:

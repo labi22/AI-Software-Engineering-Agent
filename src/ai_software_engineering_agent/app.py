@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from .agent import Agent, AgentError
 from .agent_state import AgentStatus
 from .config import Settings
+from .langgraph_agent import LangGraphAgent
 from .embeddings import (
     EmbeddingClient,
     EmbeddingConfigurationError,
@@ -154,6 +155,7 @@ class AgentRunRequest(BaseModel):
     repository_path: str | None = Field(default=None, description="Optional local repository path to bind safe engineering tools to")
     repo_id: str | None = Field(default=None, description="Optional repository ID")
     max_steps: int = Field(default=10, ge=1, le=30, description="Maximum number of reasoning/action steps")
+    engine: str | None = Field(default=None, description="Orchestration engine: 'custom' or 'langgraph'")
 
 
 class AgentRunResponse(BaseModel):
@@ -167,6 +169,7 @@ class AgentRunResponse(BaseModel):
     duration_ms: float
     steps: list[AgentStepModel]
     citations: list[CitationModel]
+    engine_used: str = "custom"
 
 
 ClientFactory = Callable[[Settings], LLMClient]
@@ -375,12 +378,27 @@ def create_app(
         else:
             tool_registry = create_default_tool_registry(rag_svc)
 
-        agent = Agent(
-            llm_client=llm_client,
-            tool_registry=tool_registry,
-            settings=request.app.state.settings,
-            max_steps=payload.max_steps,
-        )
+        engine_choice = (payload.engine or request.app.state.settings.agent_orchestration_engine).strip().lower()
+        if engine_choice not in ("custom", "langgraph"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported orchestration engine: {engine_choice!r}. Choose 'custom' or 'langgraph'.",
+            )
+
+        if engine_choice == "langgraph":
+            agent = LangGraphAgent(
+                llm_client=llm_client,
+                tool_registry=tool_registry,
+                settings=request.app.state.settings,
+                max_steps=payload.max_steps,
+            )
+        else:
+            agent = Agent(
+                llm_client=llm_client,
+                tool_registry=tool_registry,
+                settings=request.app.state.settings,
+                max_steps=payload.max_steps,
+            )
 
         try:
             result = await agent.run(payload.task)
@@ -405,10 +423,11 @@ def create_app(
         for step in result.steps:
             tc = step.tool_call
             obs = step.observation
+            status_val = step.status.value if hasattr(step.status, "value") else str(step.status)
             steps_data.append(
                 AgentStepModel(
                     step_number=step.step_number,
-                    status=step.status.value,
+                    status=status_val,
                     reasoning=step.reasoning,
                     tool_name=tc.tool_name if tc else None,
                     tool_arguments=dict(tc.arguments) if tc else None,
@@ -438,6 +457,7 @@ def create_app(
             duration_ms=round(result.duration_ms, 2),
             steps=steps_data,
             citations=citations_data,
+            engine_used=engine_choice,
         )
 
     @app.post("/v1/mcp")

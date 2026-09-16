@@ -16,6 +16,7 @@ from ai_software_engineering_agent.llm import (
     LLMRequest,
     LLMResponse,
     OpenAIResponsesClient,
+    create_llm_client,
 )
 from ai_software_engineering_agent.vector_store import InMemoryVectorStore
 
@@ -48,6 +49,28 @@ def fake_settings(allowed_roots: tuple[Path, ...] = ()) -> Settings:
 def test_settings_rejects_invalid_provider():
     with pytest.raises(ValueError, match="LLM_PROVIDER"):
         Settings.from_environment({"LLM_PROVIDER": "copilot"})
+
+
+def test_settings_supports_groq_and_reads_its_key():
+    settings = Settings.from_environment(
+        {"LLM_PROVIDER": "groq", "GROQ_API_KEY": "test-groq-key"}
+    )
+
+    assert settings.llm_provider == "groq"
+    assert settings.groq_api_key == "test-groq-key"
+
+
+def test_groq_factory_requires_a_groq_key():
+    settings = Settings(
+        llm_provider="groq",
+        llm_model="openai/gpt-oss-20b",
+        openai_api_key=None,
+        request_timeout_seconds=30,
+        allowed_repository_roots=(),
+    )
+
+    with pytest.raises(LLMConfigurationError, match="GROQ_API_KEY"):
+        create_llm_client(settings)
 
 
 def test_openai_adapter_normalizes_a_response_without_a_network_call():
@@ -87,6 +110,30 @@ def test_openai_adapter_normalizes_a_response_without_a_network_call():
         model="returned-model",
         provider_request_id="resp_123",
     )
+
+
+def test_openai_compatible_adapter_preserves_the_configured_provider():
+    fake_response = type(
+        "Response",
+        (),
+        {"output_text": "Groq output.", "model": "openai/gpt-oss-20b", "id": "resp_456"},
+    )()
+    fake_client = type(
+        "Client",
+        (),
+        {"responses": type("Responses", (), {"create": lambda self, **_: fake_response})()},
+    )()
+    adapter = OpenAIResponsesClient(
+        api_key="not-used-by-the-fake",
+        model="openai/gpt-oss-20b",
+        timeout_seconds=30,
+        provider="groq",
+        client=fake_client,
+    )
+
+    result = asyncio.run(adapter.generate(LLMRequest(prompt="Hello")))
+
+    assert result.provider == "groq"
 
 
 def test_health_does_not_require_an_api_key():
