@@ -551,7 +551,7 @@ def test_agent_run_endpoint_respects_max_steps_param():
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "error"
+    assert data["status"] == "failed"
     assert data["total_steps"] == 2
     assert "Step limit exceeded" in data["answer"]
 

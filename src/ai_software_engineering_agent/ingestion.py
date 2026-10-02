@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+from contextlib import asynccontextmanager
 import hashlib
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 from typing import Sequence
+from urllib.parse import urlparse
 
+from .config import Settings
 from .models import CodeChunk, FileDocument, RepositorySpec
+from .safety import CommandSecurityError, sanitize_git_ref
+from .tree_sitter_parsers import chunk_tree_sitter_document
 
 # Directories and files to exclude from code ingestion
 DEFAULT_EXCLUDED_DIRS = {
@@ -97,7 +106,10 @@ LANGUAGE_EXTENSIONS: dict[str, str] = {
     ".js": "javascript",
     ".jsx": "javascript",
     ".ts": "typescript",
-    ".tsx": "typescript",
+    ".tsx": "tsx",
+    ".java": "java",
+    ".go": "go",
+    ".cs": "csharp",
     ".html": "html",
     ".css": "css",
     ".txt": "text",
@@ -113,6 +125,91 @@ class IngestionError(Exception):
 
 class RepositoryAccessError(IngestionError):
     """Raised when repository path is unauthorized or unreadable."""
+
+
+class RemoteRepositoryError(IngestionError):
+    """Raised when a remote repository fails URL validation or safe cloning."""
+
+
+def validate_github_repository_url(url: str) -> str:
+    """Allow only canonical public HTTPS GitHub owner/repository URLs."""
+    parsed = urlparse(url.strip())
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RemoteRepositoryError("Only public HTTPS URLs on github.com are supported.")
+
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 2:
+        raise RemoteRepositoryError("GitHub URL must be in the form https://github.com/<owner>/<repository>.")
+    owner, repository = parts
+    if any(char.isspace() for char in f"{owner}{repository}"):
+        raise RemoteRepositoryError("GitHub owner and repository names must contain no whitespace.")
+    repository = repository.removesuffix(".git")
+    if not owner or not repository:
+        raise RemoteRepositoryError("GitHub owner and repository names cannot be empty.")
+    return f"https://github.com/{owner}/{repository}.git"
+
+
+def _directory_size_bytes(path: Path) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for filename in files:
+            try:
+                total += (Path(root) / filename).stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _clone_github_repository(url: str, ref: str, destination: Path, settings: Settings) -> None:
+    try:
+        safe_ref = sanitize_git_ref(ref)
+    except CommandSecurityError as error:
+        raise RemoteRepositoryError(str(error)) from error
+
+    command = [
+        "git", "-c", "protocol.file.allow=never", "clone", "--depth", "1",
+        "--filter=blob:none", "--no-tags", "--single-branch",
+    ]
+    if safe_ref != "HEAD":
+        command.extend(["--branch", safe_ref])
+    command.extend(["--", url, str(destination)])
+    environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1"}
+
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True,
+            timeout=settings.github_clone_timeout_seconds, env=environment, check=False,
+        )
+    except FileNotFoundError as error:
+        raise RemoteRepositoryError("Git is required for remote repository ingestion but was not found.") from error
+    except subprocess.TimeoutExpired as error:
+        raise RemoteRepositoryError("GitHub clone timed out before the repository could be ingested.") from error
+
+    if completed.returncode != 0:
+        raise RemoteRepositoryError("Unable to clone the requested GitHub repository or ref.")
+    if _directory_size_bytes(destination) > settings.github_max_repository_bytes:
+        raise RemoteRepositoryError("Cloned repository exceeds the configured size limit.")
+
+
+@asynccontextmanager
+async def cloned_github_repository(url: str, ref: str, settings: Settings):
+    """Clone an approved GitHub repository to a temporary directory for ingestion only."""
+    clone_url = validate_github_repository_url(url)
+    temporary_directory = Path(tempfile.mkdtemp(prefix="ai-swe-github-"))
+    destination = temporary_directory / "repository"
+    try:
+        await asyncio.to_thread(_clone_github_repository, clone_url, ref, destination, settings)
+        yield destination
+    finally:
+        await asyncio.to_thread(shutil.rmtree, temporary_directory, ignore_errors=True)
 
 
 def validate_repository_path(
@@ -143,10 +240,14 @@ def validate_repository_path(
 def discover_files(
     repo_path: Path | str,
     allowed_roots: Sequence[Path] = (),
+    *,
+    max_files: int | None = None,
+    max_total_bytes: int | None = None,
 ) -> list[Path]:
     """Discover all supported text and source code files in the repository."""
     valid_root = validate_repository_path(repo_path, allowed_roots)
     found_files: list[Path] = []
+    total_bytes = 0
 
     for root, dirs, files in os.walk(valid_root):
         # Prune excluded directories in-place
@@ -154,6 +255,8 @@ def discover_files(
 
         for filename in files:
             file_path = Path(root) / filename
+            if file_path.is_symlink():
+                continue
             suffix = file_path.suffix.lower()
 
             if suffix in DEFAULT_EXCLUDED_EXTENSIONS:
@@ -164,11 +267,17 @@ def discover_files(
                 continue
 
             try:
-                if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
+                file_size = file_path.stat().st_size
+                if file_size > MAX_FILE_SIZE_BYTES:
                     continue
             except OSError:
                 continue
 
+            if max_files is not None and len(found_files) >= max_files:
+                raise IngestionError(f"Repository exceeds the configured file limit ({max_files}).")
+            if max_total_bytes is not None and total_bytes + file_size > max_total_bytes:
+                raise IngestionError("Repository exceeds the configured ingestible-file size limit.")
+            total_bytes += file_size
             found_files.append(file_path)
 
     return sorted(found_files)
@@ -224,6 +333,10 @@ def chunk_document(
         chunks = _chunk_python_ast(doc, repo_id, max_lines, overlap)
         if chunks:
             return chunks
+
+    chunks = chunk_tree_sitter_document(doc, repo_id, max_lines, overlap)
+    if chunks:
+        return chunks
 
     return _chunk_sliding_window(doc, repo_id, max_lines, overlap)
 

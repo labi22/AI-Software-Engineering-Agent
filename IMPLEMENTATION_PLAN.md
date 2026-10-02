@@ -4,6 +4,115 @@ This document records the design and architecture implemented across milestones 
 
 ---
 
+## Production-Readiness Backlog (Post-Day 11)
+
+### Goal
+
+Evolve the local, learning-focused agent into a production-shaped, portfolio-ready
+service without claiming an unsupported production SLA. The initial deployment will
+use Groq as the low-cost inference provider; provider quotas and outages remain an
+explicit system constraint rather than something the application hides.
+
+### Delivery Sequence
+
+1. **LangGraph-only orchestration (current step).** Remove the custom ReAct loop
+   from the HTTP runtime, configuration, and public request contract. Retain its
+   reusable typed tool/result models; retain the original loop only as a documented
+   learning reference until the later code-retirement task is complete.
+2. **Secure remote GitHub ingestion.** Accept an explicit repository URL and ref,
+   shallow-clone into an isolated temporary workspace, apply protocol/size/file-count
+   limits, treat repository content as untrusted, and clean up after ingestion.
+3. **Multi-language source parsing.** Introduce Tree-sitter-backed parsing for
+   Python, TypeScript/JavaScript, Java, Go, and C#, with a safe text-chunking fallback.
+4. **Authentication and tenancy.** Add authenticated identities, organisation/user
+   ownership to every durable record, and server-side authorisation at every resource
+   boundary.
+5. **Durable API and worker architecture.** Make long-running ingestion asynchronous
+   and persist repository, ingestion-job, document, agent-run, and checkpoint state.
+6. **Deployment hardening.** Add Postgres/pgvector, Redis, idempotency records,
+   rate and concurrency limits, bounded retries, caching, observability, CI/CD, and
+   load/failure testing.
+
+### Target Production Architecture
+
+```text
+Client
+  -> FastAPI (authentication, validation, rate limit, idempotency)
+      -> LangGraph agent run (Groq model + safe tools + durable checkpoint)
+      -> PostgreSQL / pgvector (tenant-scoped durable data)
+      -> Redis (rate limits, idempotency, cache, coordination)
+      -> Worker queue (clone, parse, embed, index)
+```
+
+### Key Design Decisions
+
+| Area | Decision | Reason |
+| --- | --- | --- |
+| Runtime orchestrator | LangGraph only | A single production path avoids duplicated security, tracing, retry, and correctness work. |
+| Custom ReAct loop | Learning/reference artifact, not a deployed engine | It demonstrates fundamentals without creating an unsupported public execution mode. |
+| Groq | Default low-cost provider behind the existing LLM boundary | Appropriate for demo deployment; quotas and availability require admission control and graceful errors. |
+| Parser strategy | Tree-sitter plus a text fallback | Provides consistent multi-language syntax extraction without bespoke parsers per language. |
+| Repository trust | Remote repository content is untrusted | Source files can contain prompt injection, oversized artifacts, secrets, or hostile paths. |
+
+### Step 1 Acceptance Checks
+
+- `POST /v1/agent/run` always executes LangGraph.
+- The public request no longer accepts an orchestration-engine choice.
+- Runtime configuration no longer permits a custom orchestration engine.
+- Existing LangGraph direct-answer, tool-call, failure, checkpoint, and API tests pass.
+- The custom-loop code remains isolated from the deployed request path pending its
+  separately tracked retirement/refactor.
+
+### Step 2: Secure Remote GitHub Ingestion
+
+`POST /v1/repositories/ingest` now accepts exactly one source: a local
+`repository_path` or a public `github_url`, plus an optional branch/tag `ref`.
+Remote ingestion validates canonical HTTPS `github.com/<owner>/<repository>` URLs,
+uses `git clone --depth 1 --filter=blob:none --no-tags --single-branch` with
+interactive credentials and Git LFS smudging disabled, and deletes the isolated
+temporary checkout after chunks have been indexed. It applies clone timeout,
+repository-size, file-count, per-file-size, and aggregate ingestible-source limits.
+
+The URL allowlist and subprocess are deliberately narrow. This is not a general
+Git URL fetcher, does not accept credentials or SSH URLs, and does not retain a
+working clone for later agent tool execution. Repository source remains untrusted
+input and must never be treated as instructions to the system.
+
+### Step 3: Multi-Language Tree-sitter Parsing
+
+Python keeps its standard-library AST parser. JavaScript, TypeScript/TSX, Java,
+Go, and C# use individually pinned Tree-sitter grammar bindings supplied through
+the optional `parsers` dependency extra. The chunker extracts declarations and
+method-qualified symbols, retains uncovered package/import/comment blocks, and
+falls back to line-window chunks if a grammar is unavailable or Tree-sitter
+reports syntax errors. This preserves successful ingestion of incomplete,
+generated, or unsupported source without fabricating symbol metadata.
+
+### Step 4a: Authentication and Tenant Authorization Boundary
+
+The service now supports `AUTH_ENABLED=true` with `X-API-Key` authentication.
+Only SHA-256 key digests are configured, and digest comparison uses
+constant-time comparison. A principal carries an organization ID; repository
+ingestion claims that repository for its organization, and RAG, agent, and MCP
+requests are denied unless the caller owns the specified repository. Agent RAG
+tools receive a fixed repository filter, so an authorized agent run cannot use
+an unfiltered retrieval tool to see other repositories.
+
+With authentication enabled, `DATABASE_URL` is mandatory. The Postgres control
+plane idempotently provisions `tenant_organizations`, `tenant_api_keys`, and
+`tenant_repositories`, and persists configured key hashes and repository
+ownership across restarts and replicas. The in-memory ownership implementation
+is retained solely for isolated tests. Ingestion jobs and agent-run records are
+not yet durable; they remain explicitly scheduled under the durable API/worker
+architecture step.
+
+Remaining identity scope: this release authenticates organization service
+principals through API keys. Human-user login, OIDC integration, role-based
+permissions, API-key rotation/revocation management endpoints, and database
+migration tooling remain future work and must not be represented as implemented.
+
+---
+
 ## Day 5-6 Milestone: Retrieval Quality, Hybrid Search, and Verified Citations
 
 ### Goal
@@ -446,3 +555,176 @@ Establish an empirical evaluation harness to measure, benchmark, and improve ret
 | **Precision@K** | $\frac{\|\text{Retrieved}_K \cap \text{Relevant}\|}{K}$ | Cleanliness: Did the retriever avoid polluting the LLM context window with noisy irrelevant code? |
 | **MRR** | $\frac{1}{\|Q\|} \sum_{i=1}^{\|Q\|} \frac{1}{\text{rank}_i}$ | Ranking Quality: How close to the top (rank 1) was the primary ground-truth file? |
 
+
+---
+
+## Production Readiness Architecture (HLD & LLD)
+
+This section provides the High-Level Design (HLD) and Low-Level Design (LLD) for transforming the codebase into an enterprise-grade, portfolio-ready Agentic AI platform built to withstand production concurrency, provider quota ceilings, and distributed failures.
+
+### High-Level Architecture (HLD)
+
+```text
+                                     +-----------------------------------------+
+                                     |           API Clients & IDEs            |
+                                     +--------------------+--------------------+
+                                                          |
+                                                          | HTTPS (X-API-Key, Idempotency-Key)
+                                                          v
++-----------------------------------------------------------------------------------------------------------------------+
+| FastAPI Application Gateway                                                                                            |
+|                                                                                                                       |
+|  +---------------------------+   +----------------------------+   +----------------------------+                      |
+|  | Tenant Auth & Repository  |-->| Rate Limiting & Concurrency|-->| Distributed Idempotency    |                      |
+|  | Ownership Verification    |   | (Sliding Window / Leaky)   |   | (In-Progress Lock / Cache) |                      |
+|  +---------------------------+   +----------------------------+   +----------------------------+                      |
+|                                                |                                                                      |
+|                                                v                                                                      |
+|  +-----------------------------------------------------------------------------------------------------------------+  |
+|  | Endpoints Router                                                                                                |  |
+|  |  * POST /v1/repositories/ingest/async -> Enqueue background job (returns 202 + job_id)                         |  |
+|  |  * GET  /v1/ingestion-jobs/{job_id}   -> Poll job status, worker progress, and chunk metadata                    |  |
+|  |  * POST /v1/agent/run                 -> Run LangGraph agent with checkpointing & run persistence               |  |
+|  |  * GET  /v1/agent/runs/{run_id}       -> Audit trail & step-by-step trace retrieval                             |  |
+|  |  * POST /v1/rag/query                 -> Hybrid RAG with semantic embedding caching                             |  |
+|  |  * GET  /health                       -> Multi-tier liveness & readiness check (DB, Redis, LLM provider)        |  |
+|  |  * GET  /metrics                      -> Prometheus metrics (latencies, token counters, active runs, queue depth)| |
+|  +-----------------------------------------------------------------------------------------------------------------+  |
++-----------------------------------------------------------------------------------------------------------------------+
+           |                                             |                                           |
+           | DB Queries / Enqueue                        | Coordination / Caching                    | Inference
+           v                                             v                                           v
++------------------------------------+         +-----------------------+         +-------------------------------------+
+| PostgreSQL 16 + pgvector           |         | Redis 7               |         | Groq / LLM Admission Controller     |
+|                                    |         |                       |         |                                     |
+| * tenant_organizations             |         | * Rate limiter buckets|         | * Token bucket rate pacer           |
+| * tenant_api_keys                  |         | * Concurrency leases  |         | * Jittered exponential retry on 429 |
+| * tenant_repositories              |         | * Idempotency cache   |         | * Step budget & timeout enforcer    |
+| * ingestion_jobs (SKIP LOCKED)     |         | * Query/embedding     |         | * Quota exhaustion graceful fallback|
+| * agent_runs (Audit traces)        |         |   cache               |         +-------------------------------------+
+| * langgraph_checkpoints (State)    |         +-----------------------+
+| * document_chunks (Vectors + Meta) |
++------------------------------------+
+           ^
+           | Atomic Claims (FOR UPDATE SKIP LOCKED)
+           |
++---------------------------------------------------------------------------------------+
+| Ingestion Worker Pool (Scale: N replicas)                                             |
+|                                                                                       |
+|  Loop: claim_next() -> clone repo -> tree-sitter parse -> embed -> store -> finish()  |
++---------------------------------------------------------------------------------------+
+```
+
+---
+
+### Phase 5A: Durable Ingestion Jobs & Worker Queue
+
+#### 1. HLD Rationale
+Repository cloning (especially remote GitHub repositories), multi-language Tree-sitter parsing, and vector embedding creation are blocking, compute- and network-heavy operations. Running them synchronously inside an HTTP request handler causes:
+- HTTP 504 Gateway Timeouts at reverse proxies (Nginx/Cloudflare 30s limits).
+- Thread/event loop starvation for incoming API requests.
+- Complete data loss and inconsistent state if the web container restarts mid-ingestion.
+
+#### 2. LLD Implementation
+- **Queue Engine (`ingestion_jobs.py`)**:
+  - `PostgresIngestionJobStore`: Leverages `FOR UPDATE SKIP LOCKED` for atomic, race-free single-item claims across any number of concurrent worker processes.
+  - `InMemoryIngestionJobStore`: Lightweight thread-safe in-memory fallback for unit testing and local developer workflows without PostgreSQL.
+  - States: `queued` -> `running` -> `succeeded` | `failed`.
+- **Worker Runner (`worker.py`)**:
+  - Standalone daemon process or scheduled async runner: `run_worker(store, rag_service, settings, stop_event)`.
+  - Claims job, sets job to `running`, shallow clones via `cloned_github_repository`, chunks via multi-language chunker, generates embeddings, stores chunks in `VectorStore` + `BM25Index`, and updates job to `succeeded` with summary payload or `failed` with captured error traceback.
+- **REST Contract**:
+  - `POST /v1/repositories/ingest/async`: Validates request, checks tenant repository ownership, enqueues job into store, returns HTTP 202 Accepted with `{ "job_id": "<uuid>", "status": "queued" }`.
+  - `GET /v1/ingestion-jobs/{job_id}`: Checks organization ownership and returns current status, attempts, error message (if any), and ingestion metrics when completed.
+
+---
+
+### Phase 5B: Postgres-Backed LangGraph Checkpoints & Agent-Run Persistence
+
+#### 1. HLD Rationale
+Production agent workflows can execute for dozens of seconds or interact over multi-turn conversations. Without durable checkpointing and run persistence:
+- If a container restarts, mid-flight reasoning state is completely lost.
+- No historical audit trail exists for debugging hallucinations, monitoring cost, or auditing tool execution.
+- Multi-turn conversation threads cannot be re-hydrated on different replicas.
+
+#### 2. LLD Implementation
+- **Database Schema**:
+  - `agent_runs` table: `id (UUID PK)`, `organization_id (FK)`, `repo_id`, `task`, `status`, `total_steps`, `duration_ms`, `answer`, `citations (JSONB)`, `steps (JSONB)`, `created_at`, `completed_at`.
+- **LangGraph Checkpointing (`checkpointer.py` / `langgraph_agent.py`)**:
+  - Durable Postgres checkpointer storing state snapshots (serialized graph state, messages, node positions) under `thread_id = run_id`.
+  - `PostgresCheckpointSaver` implementing LangGraph's checkpoint saver interface or integrated durable snapshot serializer.
+  - In-memory fallback (`MemorySaver`) for ephemeral testing.
+- **REST Contract**:
+  - `POST /v1/agent/run`: Automatically persists the run record and writes final step trace and state to PostgreSQL upon completion.
+  - `GET /v1/agent/runs/{run_id}`: Allows retrieving historical run output, tool reasoning trace, citation verification, and timing.
+
+---
+
+### Phase 5C: Redis Coordination - Rate Limits, Concurrency Controls, Idempotency & Caching
+
+#### 1. HLD Rationale
+- **Idempotency**: Network retries from clients can trigger duplicate agent runs or duplicate ingestions, costing money and corrupting data.
+- **Rate Limiting**: Malicious or runaway clients can exhaust LLM budgets. Rate limits enforce fair multi-tenant quotas.
+- **Concurrency Control**: LLM inference and agent tool execution consume heavy memory and concurrent connections. Bounding concurrent runs per tenant prevents resource starvation.
+- **Multi-Tier Caching**: Repeated embedding calls for identical text and repeated queries waste provider latency and cost.
+
+#### 2. LLD Implementation
+- **Coordination Layer (`coordination.py`)**:
+  - `RedisCoordinationService` (using `redis.asyncio` with pooling) + `InMemoryCoordinationService` fallback.
+- **Idempotency Primitive**:
+  - Evaluated on `Idempotency-Key` header.
+  - Atomic reservation: `SET key "in_progress" NX EX 300`. If key exists and is "in_progress", return `409 Conflict` ("Request with this Idempotency-Key is currently being processed").
+  - On request completion: save JSON response payload with 24-hour TTL (`EX 86400`). Subsequent identical requests return the cached response with `X-Cache: HIT-IDEMPOTENT`.
+- **Sliding-Window Rate Limiter**:
+  - Per organization / API key sliding window: max $N$ requests per minute. Returns `429 Too Many Requests` with `Retry-After: <seconds>` and `X-RateLimit-*` headers.
+- **Tenant Concurrency Limiter**:
+  - Distributed semaphore per tenant: max $K$ concurrent agent runs (e.g. 2 concurrent runs per organization). Returns `429 Too Many Requests` if tenant quota is actively consumed.
+- **Embedding & Query Cache**:
+  - SHA-256 hash of query text as cache key. Prevents repetitive embedding model calls.
+
+---
+
+### Phase 5D: Groq LLM Admission Control, Bounded Retries & Quota Resilience
+
+#### 1. HLD Rationale
+Groq provides fast cloud inference, but free and standard tiers enforce strict RPM (Requests Per Minute) and TPM (Tokens Per Minute) caps. Naive concurrent agent steps will immediately hit `429 Too Many Requests`. The system must:
+- Pace LLM calls through an admission controller.
+- Automatically retry on transient network errors (HTTP 500, 502, 503) and 429 with jittered exponential backoff.
+- Gracefully fail with informative messages and proper HTTP status codes when provider quotas are genuinely exhausted.
+
+#### 2. LLD Implementation
+- **Admission Controller (`llm_admission.py`)**:
+  - Leaky bucket / token-bucket pacer to throttle dispatch rate below provider RPM limits.
+- **Bounded Retry Mechanism**:
+  - Wrapped around `LLMClient.generate()`: 3 max attempts.
+  - Delay formula: $T_{backoff} = \min(T_{max}, T_{base} 	imes 2^{	ext{attempt}}) \pm 	ext{jitter}$.
+  - Respects provider `Retry-After` headers if present in 429 response.
+- **Error Mapping**:
+  - `LLMQuotaExhaustedError` -> Maps to HTTP 429 with descriptive tenant error.
+  - `LLMTimeoutError` -> Maps to HTTP 504 Gateway Timeout.
+
+---
+
+### Phase 5E / Day 12: Production Observability, Health Checks, Docker & CI/CD
+
+#### 1. HLD Rationale
+To demonstrate senior-level deployment readiness, the service must be observable, containerized, orchestrated, and validated by automated CI/CD pipelines.
+
+#### 2. LLD Implementation
+- **Structured JSON Logging (`logging_config.py`)**:
+  - JSON-formatted logs containing timestamp, log level, message, `request_id`, `tenant_id`, and `duration_ms`.
+  - Request middleware generating or propagating `X-Request-ID`.
+- **Observability & Metrics (`metrics.py`)**:
+  - Prometheus `/metrics` endpoint exporting:
+    - `http_requests_total{method, path, status}`
+    - `http_request_duration_seconds{method, path}`
+    - `llm_requests_total{provider, model, status}`
+    - `llm_request_duration_seconds{provider, model}`
+    - `agent_runs_active{organization_id}`
+    - `ingestion_queue_depth{status}`
+- **Comprehensive Health Probes (`/health`)**:
+  - Deep readiness checks: validates database connectivity (`SELECT 1`), Redis ping, and vector store readiness.
+- **Deployment Artifacts**:
+  - Multi-stage `Dockerfile`: unprivileged user, lean dependencies, secure non-root runtime.
+  - `docker-compose.yml`: API service, Ingestion Worker, PostgreSQL 16 with pgvector extension, and Redis 7 with persistent volume.
+  - `.github/workflows/ci.yml`: Automated linting, type checks, and full regression test execution.

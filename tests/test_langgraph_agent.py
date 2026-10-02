@@ -24,7 +24,7 @@ from ai_software_engineering_agent.tools import (
 from ai_software_engineering_agent.vector_store import InMemoryVectorStore
 
 
-def fake_settings(engine: str = "langgraph") -> Settings:
+def fake_settings() -> Settings:
     return Settings(
         llm_provider="openai",
         llm_model="test-model",
@@ -34,7 +34,6 @@ def fake_settings(engine: str = "langgraph") -> Settings:
         embedding_provider="fake",
         vector_store_type="memory",
         agent_max_steps=5,
-        agent_orchestration_engine=engine,
     )
 
 
@@ -194,13 +193,13 @@ async def test_langgraph_checkpoint_persistence():
 
 
 # ---------------------------------------------------------------------------
-# API Integration Tests (/v1/agent/run?engine=langgraph)
+# API Integration Tests (/v1/agent/run)
 # ---------------------------------------------------------------------------
 
 
-def test_api_agent_run_with_langgraph_engine():
-    """POST /v1/agent/run executes correctly with engine='langgraph'."""
-    settings = fake_settings(engine="langgraph")
+def test_api_agent_run_uses_langgraph():
+    """POST /v1/agent/run always executes through LangGraph."""
+    settings = fake_settings()
     llm = ScriptedLLMClient(responses=["LangGraph API response."])
     vstore = InMemoryVectorStore()
     eclient = FakeEmbeddingClient()
@@ -215,63 +214,29 @@ def test_api_agent_run_with_langgraph_engine():
 
     response = client.post(
         "/v1/agent/run",
-        json={"task": "Explain LangGraph", "engine": "langgraph"},
+        json={"task": "Explain LangGraph"},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "finished"
     assert data["answer"] == "LangGraph API response."
-    assert data["engine_used"] == "langgraph"
+    assert data["orchestration_engine"] == "langgraph"
     assert data["total_steps"] >= 1
 
 
-def test_api_agent_run_defaults_to_custom_engine():
-    """POST /v1/agent/run defaults to engine='custom' when not specified."""
-    settings = fake_settings(engine="custom")
-    llm = ScriptedLLMClient(responses=["Custom ReAct response."])
-    vstore = InMemoryVectorStore()
-    eclient = FakeEmbeddingClient()
-
+def test_api_agent_run_rejects_legacy_engine_selection():
+    """The public API cannot silently accept a retired custom-engine option."""
     app = create_app(
-        settings=settings,
-        client_factory=lambda s: llm,
-        embedding_factory=lambda s: eclient,
-        vector_store_factory=lambda s: vstore,
+        settings=fake_settings(),
+        client_factory=lambda _settings: ScriptedLLMClient(responses=[]),
+        embedding_factory=lambda _settings: FakeEmbeddingClient(),
+        vector_store_factory=lambda _settings: InMemoryVectorStore(),
     )
-    client = TestClient(app)
 
-    response = client.post(
+    response = TestClient(app).post(
         "/v1/agent/run",
-        json={"task": "Explain ReAct"},
+        json={"task": "Explain LangGraph", "engine": "custom"},
     )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "finished"
-    assert data["answer"] == "Custom ReAct response."
-    assert data["engine_used"] == "custom"
-
-
-def test_api_agent_run_rejects_invalid_engine():
-    """POST /v1/agent/run returns 400 for an invalid engine name."""
-    settings = fake_settings()
-    llm = ScriptedLLMClient(responses=[""])
-    vstore = InMemoryVectorStore()
-    eclient = FakeEmbeddingClient()
-
-    app = create_app(
-        settings=settings,
-        client_factory=lambda s: llm,
-        embedding_factory=lambda s: eclient,
-        vector_store_factory=lambda s: vstore,
-    )
-    client = TestClient(app)
-
-    response = client.post(
-        "/v1/agent/run",
-        json={"task": "Invalid engine test", "engine": "nonexistent_engine"},
-    )
-
-    assert response.status_code == 400
-    assert "Unsupported orchestration engine" in response.json()["detail"]
+    assert response.status_code == 422

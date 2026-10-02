@@ -4,13 +4,17 @@ from pathlib import Path
 import pytest
 
 from ai_software_engineering_agent.ingestion import (
+    IngestionError,
+    RemoteRepositoryError,
     RepositoryAccessError,
     chunk_document,
     discover_files,
     parse_file,
+    validate_github_repository_url,
     validate_repository_path,
 )
 from ai_software_engineering_agent.models import FileDocument
+from ai_software_engineering_agent.tree_sitter_parsers import tree_sitter_available
 
 
 def test_validate_repository_path_rejects_nonexistent_directory(tmp_path: Path):
@@ -65,6 +69,48 @@ def test_discover_files_ignores_excluded_dirs_and_binaries(tmp_path: Path):
     assert "config" not in file_names
     assert "main.cpython-311.pyc" not in file_names
     assert "image.png" not in file_names
+
+
+@pytest.mark.parametrize(
+    ("raw_url", "canonical_url"),
+    [
+        (
+            "https://github.com/labi22/Fixed-Income-Analytics-Bond-Valuation-Platform",
+            "https://github.com/labi22/Fixed-Income-Analytics-Bond-Valuation-Platform.git",
+        ),
+        ("https://github.com/labi22/example.git", "https://github.com/labi22/example.git"),
+    ],
+)
+def test_validate_github_repository_url_accepts_canonical_public_urls(raw_url: str, canonical_url: str):
+    assert validate_github_repository_url(raw_url) == canonical_url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "git@github.com:labi22/example.git",
+        "http://github.com/labi22/example",
+        "https://github.com/labi22/example/issues",
+        "https://github.com/labi22/example?ref=main",
+        "https://user:secret@github.com/labi22/example",
+        "https://gitlab.com/labi22/example",
+    ],
+)
+def test_validate_github_repository_url_rejects_unsafe_or_unsupported_urls(url: str):
+    with pytest.raises(RemoteRepositoryError):
+        validate_github_repository_url(url)
+
+
+def test_discover_files_enforces_remote_ingestion_limits(tmp_path: Path):
+    repo = tmp_path / "limited"
+    repo.mkdir()
+    (repo / "one.py").write_text("one = 1", encoding="utf-8")
+    (repo / "two.py").write_text("two = 2", encoding="utf-8")
+
+    with pytest.raises(IngestionError, match="file limit"):
+        discover_files(repo, max_files=1)
+    with pytest.raises(IngestionError, match="size limit"):
+        discover_files(repo, max_total_bytes=1)
 
 
 def test_parse_file_extracts_metadata(tmp_path: Path):
@@ -134,3 +180,64 @@ def test_chunk_document_sliding_window_for_markdown():
     assert chunks[0].start_line == 1
     assert chunks[0].end_line == 40
     assert chunks[1].start_line == 31  # 40 - 10 + 1
+
+
+@pytest.mark.parametrize(
+    ("language", "source", "expected_symbols"),
+    [
+        (
+            "javascript",
+            "class Bond {\n  price() { return 100; }\n}\nfunction yieldToMaturity() { return 0.05; }\n",
+            {"Bond", "Bond.price", "yieldToMaturity"},
+        ),
+        (
+            "typescript",
+            "interface Priced { value(): number; }\nclass Bond implements Priced {\n  value(): number { return 100; }\n}\n",
+            {"Priced", "Bond", "Bond.value"},
+        ),
+        (
+            "java",
+            "public class Bond {\n  public double price() { return 100.0; }\n}\n",
+            {"Bond", "Bond.price"},
+        ),
+        (
+            "go",
+            "package bond\n\ntype Curve struct {}\nfunc Price() float64 { return 100 }\n",
+            {"Curve", "Price"},
+        ),
+        (
+            "csharp",
+            "public class Bond {\n  public decimal Price() { return 100m; }\n}\n",
+            {"Bond", "Bond.Price"},
+        ),
+    ],
+)
+def test_chunk_document_extracts_tree_sitter_symbols(
+    language: str, source: str, expected_symbols: set[str],
+):
+    if not tree_sitter_available(language):
+        pytest.skip(f"Tree-sitter grammar for {language} is not installed")
+    doc = FileDocument(
+        file_path=Path(f"example.{language}"), relative_path=f"example.{language}",
+        language=language, content=source, line_count=len(source.splitlines()),
+        size_bytes=len(source.encode("utf-8")),
+    )
+
+    chunks = chunk_document(doc, repo_id="polyglot")
+    symbols = {chunk.symbol_name for chunk in chunks if chunk.symbol_name}
+
+    assert expected_symbols <= symbols
+
+
+def test_chunk_document_falls_back_to_line_windows_for_invalid_tree_sitter_source():
+    source = "public class Broken { public void run( { }"
+    doc = FileDocument(
+        file_path=Path("Broken.java"), relative_path="Broken.java", language="java",
+        content=source, line_count=1, size_bytes=len(source),
+    )
+
+    chunks = chunk_document(doc, repo_id="polyglot")
+
+    assert len(chunks) == 1
+    assert chunks[0].symbol_name is None
+    assert chunks[0].content == source

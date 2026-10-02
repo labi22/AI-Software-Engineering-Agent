@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Sequence
 
 from .config import Settings
@@ -170,13 +171,22 @@ class RAGService:
         )
         self.settings = settings
 
-    async def ingest_repository(self, spec: RepositorySpec) -> IngestionSummary:
+    async def ingest_repository(
+        self,
+        spec: RepositorySpec,
+        *,
+        allowed_roots: Sequence[Path] | None = None,
+        max_files: int | None = None,
+        max_total_bytes: int | None = None,
+    ) -> IngestionSummary:
         """Scan, parse, chunk, embed, and index a repository across vector and BM25 stores."""
         await self.vector_store.initialize()
 
         discovered_paths = discover_files(
             spec.root_path,
-            allowed_roots=self.settings.allowed_repository_roots,
+            allowed_roots=self.settings.allowed_repository_roots if allowed_roots is None else allowed_roots,
+            max_files=max_files,
+            max_total_bytes=max_total_bytes,
         )
 
         all_chunks: list[CodeChunk] = []

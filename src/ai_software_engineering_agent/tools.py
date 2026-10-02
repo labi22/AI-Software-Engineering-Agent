@@ -204,7 +204,7 @@ FINAL_ANSWER_SCHEMA = ToolSchema(
 # Built-in tool handler factories
 # ---------------------------------------------------------------------------
 
-def create_search_code_handler(rag_service: Any) -> ToolHandler:
+def create_search_code_handler(rag_service: Any, repo_id: str | None = None) -> ToolHandler:
     """Create a search_code tool handler bound to a RAGService instance."""
 
     async def search_code_handler(arguments: dict[str, Any], state: AgentState) -> str:
@@ -219,6 +219,7 @@ def create_search_code_handler(rag_service: Any) -> ToolHandler:
         results = await rag_service.retrieve(
             query=query,
             strategy=strategy,
+            filter=MetadataFilter(repo_id=repo_id) if repo_id else None,
             top_k=top_k,
         )
 
@@ -237,7 +238,7 @@ def create_search_code_handler(rag_service: Any) -> ToolHandler:
     return search_code_handler
 
 
-def create_answer_query_handler(rag_service: Any) -> ToolHandler:
+def create_answer_query_handler(rag_service: Any, repo_id: str | None = None) -> ToolHandler:
     """Create an answer_query tool handler bound to a RAGService instance."""
 
     async def answer_query_handler(arguments: dict[str, Any], state: AgentState) -> str:
@@ -251,6 +252,7 @@ def create_answer_query_handler(rag_service: Any) -> ToolHandler:
             response = await rag_service.answer_query(
                 query=query,
                 strategy=RetrievalStrategy.HYBRID,
+                filter=MetadataFilter(repo_id=repo_id) if repo_id else None,
                 top_k=top_k,
             )
         except Exception as exc:
@@ -281,11 +283,11 @@ def create_final_answer_handler() -> ToolHandler:
     return final_answer_handler
 
 
-def create_default_tool_registry(rag_service: Any) -> ToolRegistry:
+def create_default_tool_registry(rag_service: Any, repo_id: str | None = None) -> ToolRegistry:
     """Create a ToolRegistry pre-populated with the default built-in tools."""
     registry = ToolRegistry()
-    registry.register("search_code", create_search_code_handler(rag_service), SEARCH_CODE_SCHEMA)
-    registry.register("answer_query", create_answer_query_handler(rag_service), ANSWER_QUERY_SCHEMA)
+    registry.register("search_code", create_search_code_handler(rag_service, repo_id), SEARCH_CODE_SCHEMA)
+    registry.register("answer_query", create_answer_query_handler(rag_service, repo_id), ANSWER_QUERY_SCHEMA)
     registry.register("final_answer", create_final_answer_handler(), FINAL_ANSWER_SCHEMA)
     return registry
 

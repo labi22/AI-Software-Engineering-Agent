@@ -1,13 +1,15 @@
 """Tests for API endpoints including generation, repository ingestion, and grounded RAG."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
 
 from ai_software_engineering_agent.app import create_app
+from ai_software_engineering_agent.auth import hash_api_key
 from ai_software_engineering_agent.config import Settings
 from ai_software_engineering_agent.embeddings import FakeEmbeddingClient
 from ai_software_engineering_agent.llm import (
@@ -58,6 +60,15 @@ def test_settings_supports_groq_and_reads_its_key():
 
     assert settings.llm_provider == "groq"
     assert settings.groq_api_key == "test-groq-key"
+
+
+def test_settings_requires_postgres_for_enabled_authentication():
+    digest = hash_api_key("test-key")
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        Settings.from_environment({
+            "AUTH_ENABLED": "true",
+            "AUTH_API_KEY_HASHES": f"key-1:{digest}:org-1",
+        })
 
 
 def test_groq_factory_requires_a_groq_key():
@@ -142,7 +153,11 @@ def test_health_does_not_require_an_api_key():
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "version" in body
+    assert "components" in body
+    assert body["components"]["api"] == "healthy"
 
 
 def test_generate_uses_injected_fake_client():
@@ -269,3 +284,112 @@ def test_rag_query_rejects_invalid_strategy():
         json={"query": "test query", "retrieval_strategy": "invalid-strategy"},
     )
     assert response.status_code == 422
+
+
+def test_ingest_github_repository_uses_isolated_clone_source(tmp_path: Path, monkeypatch):
+    clone_path = tmp_path / "cloned-repository"
+    clone_path.mkdir()
+    (clone_path / "bond.py").write_text("def price():\n    return 100\n", encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_clone(url: str, ref: str, settings):
+        observed["url"] = url
+        observed["ref"] = ref
+        yield clone_path
+
+    monkeypatch.setattr("ai_software_engineering_agent.app.cloned_github_repository", fake_clone)
+    app = create_app(
+        settings=fake_settings(),
+        client_factory=lambda _: FakeLLMClient(),
+        embedding_factory=lambda _: FakeEmbeddingClient(dimension=32),
+        vector_store_factory=lambda _: InMemoryVectorStore(),
+    )
+
+    response = TestClient(app).post(
+        "/v1/repositories/ingest",
+        json={
+            "github_url": "https://github.com/labi22/Fixed-Income-Analytics-Bond-Valuation-Platform",
+            "ref": "main",
+            "repo_id": "bond-platform",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["repo_id"] == "bond-platform"
+    assert observed == {
+        "url": "https://github.com/labi22/Fixed-Income-Analytics-Bond-Valuation-Platform",
+        "ref": "main",
+    }
+
+
+def test_ingest_rejects_ambiguous_or_missing_repository_source():
+    client = TestClient(create_app(settings=fake_settings(), client_factory=lambda _: FakeLLMClient()))
+
+    missing = client.post("/v1/repositories/ingest", json={})
+    ambiguous = client.post(
+        "/v1/repositories/ingest",
+        json={"repository_path": "C:/repo", "github_url": "https://github.com/labi22/example"},
+    )
+
+    assert missing.status_code == 422
+    assert ambiguous.status_code == 422
+
+
+def test_authenticated_endpoints_require_a_valid_api_key():
+    api_key = "test-secret-key"
+    settings = replace(
+        fake_settings(),
+        auth_enabled=True,
+        auth_api_key_hashes=(("test-key", hash_api_key(api_key), "org-a"),),
+    )
+    client = TestClient(create_app(settings=settings, client_factory=lambda _: FakeLLMClient()))
+
+    missing = client.post("/v1/generate", json={"prompt": "hello"})
+    invalid = client.post("/v1/generate", json={"prompt": "hello"}, headers={"X-API-Key": "wrong"})
+    valid = client.post("/v1/generate", json={"prompt": "hello"}, headers={"X-API-Key": api_key})
+
+    assert missing.status_code == 401
+    assert invalid.status_code == 401
+    assert valid.status_code == 200
+
+
+def test_tenant_cannot_claim_another_organizations_repository(tmp_path: Path):
+    repo = tmp_path / "tenant-repo"
+    repo.mkdir()
+    (repo / "example.py").write_text("def value(): return 1\n", encoding="utf-8")
+    first_key, second_key = "org-a-key", "org-b-key"
+    settings = replace(
+        fake_settings(allowed_roots=(repo,)),
+        auth_enabled=True,
+        auth_api_key_hashes=(
+            ("key-a", hash_api_key(first_key), "org-a"),
+            ("key-b", hash_api_key(second_key), "org-b"),
+        ),
+    )
+    client = TestClient(create_app(
+        settings=settings,
+        client_factory=lambda _: FakeLLMClient(),
+        embedding_factory=lambda _: FakeEmbeddingClient(dimension=32),
+        vector_store_factory=lambda _: InMemoryVectorStore(),
+    ))
+
+    created = client.post(
+        "/v1/repositories/ingest",
+        json={"repository_path": str(repo), "repo_id": "shared-id"},
+        headers={"X-API-Key": first_key},
+    )
+    forbidden = client.post(
+        "/v1/repositories/ingest",
+        json={"repository_path": str(repo), "repo_id": "shared-id"},
+        headers={"X-API-Key": second_key},
+    )
+    cross_tenant_query = client.post(
+        "/v1/rag/query",
+        json={"query": "value", "repo_id": "shared-id"},
+        headers={"X-API-Key": second_key},
+    )
+
+    assert created.status_code == 200
+    assert forbidden.status_code == 403
+    assert cross_tenant_query.status_code == 403

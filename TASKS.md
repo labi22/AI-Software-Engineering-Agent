@@ -18,7 +18,7 @@ Target architecture:
 - Python project in this repository
 - FastAPI-only interface initially
 - OpenAI API as the first provider behind a provider-neutral interface
-- Minimal custom orchestration before adding heavier frameworks
+- LangGraph orchestration with a small, inspectable domain/tool layer
 - Repository ingestion and chunking
 - Embeddings and vector search
 - RAG answers with citations
@@ -194,20 +194,20 @@ Interview checkpoints:
 
 ## Day 12: API, Docker, Configuration, Logging
 
-- [ ] Create FastAPI app.
-- [ ] Add endpoint for repository ingestion.
-- [ ] Add endpoint for questions/agent runs.
-- [ ] Add request/response models.
-- [ ] Add structured logging.
-- [ ] Add configuration via environment variables.
-- [ ] Add Dockerfile.
-- [ ] Add Docker Compose for API plus PostgreSQL/pgvector if needed.
-- [ ] Add basic health check.
+- [x] Create FastAPI app.
+- [x] Add endpoint for repository ingestion (`POST /v1/repositories/ingest`, async `POST /v1/repositories/ingest/async`).
+- [x] Add endpoint for questions/agent runs (`POST /v1/agent/run`, `GET /v1/agent/runs`).
+- [x] Add request/response models (Pydantic v2, typed, validated).
+- [x] Add structured logging (`logging_config.py`, JSON format).
+- [x] Add configuration via environment variables (`config.py`, all keys documented).
+- [x] Add Dockerfile (multi-stage, non-root, health check).
+- [x] Add Docker Compose for API plus PostgreSQL/pgvector and Redis.
+- [x] Add basic health check (`GET /health`) and Prometheus metrics (`GET /metrics`).
 
 Acceptance checks:
-- [ ] API starts locally.
-- [ ] API can answer against an ingested repository.
-- [ ] Docker workflow is documented.
+- [x] API starts locally.
+- [x] API can answer against an ingested repository.
+- [x] Docker workflow is documented.
 
 Interview checkpoints:
 - [ ] Explain deployment shape, config, logging, latency, cost, and reliability.
@@ -251,8 +251,18 @@ Acceptance checks:
 
 - [x] Add LangGraph after the custom agent loop is understood.
 - [x] Add local Hugging Face embeddings if time permits.
-- [ ] Add support for remote GitHub repository ingestion.
-- [ ] Add more language parsers beyond Python.
+- [x] Production readiness: make LangGraph the sole deployed orchestration engine. `136 passed`.
+- [ ] Production readiness: retire or move the legacy custom ReAct loop after shared domain types are no longer coupled to it.
+- [x] Production readiness: add secure remote GitHub repository ingestion (URL/ref validation, shallow isolated clone, limits, cleanup). `147 passed`.
+- [x] Production readiness: add Tree-sitter parsers for TypeScript/JavaScript, Java, Go, and C# plus text fallback. `153 passed`.
+- [x] Production readiness: add authentication, organisation/user tenancy, and server-side authorisation. API-key authentication, durable Postgres organization/key/repository ownership, and server-side authorization complete.
+- [x] Production readiness: persist tenant-scoped ingestion jobs and agent runs with the durable API/worker architecture.
+- [ ] Identity backlog: add OIDC/user login, roles, API-key rotation/revocation workflows, and database migration tooling.
+- [x] Production readiness: introduce durable ingestion jobs and a worker queue. Postgres `FOR UPDATE SKIP LOCKED` queue, atomic worker claim, async enqueue/status API, and background worker runner complete.
+- [x] Production readiness: add Postgres-backed LangGraph checkpoints and agent-run persistence. `checkpointer.py`, `agent_persistence.py`, `PostgresAgentRunStore` complete.
+- [x] Production readiness: add Redis-backed rate limits, concurrency controls, idempotency, caching, and job coordination. `coordination.py` with `RedisCoordinationService` and `InMemoryCoordinationService` fallback complete.
+- [x] Production readiness: add Groq admission control, bounded retries, timeout handling, and graceful quota/outage responses. `llm_admission.py` with exponential backoff, RPM token bucket, and circuit breaker complete.
+- [x] Production readiness: add structured logs, metrics, traces, audit events, CI/CD. `logging_config.py` (JSON), `metrics.py` (Prometheus-compatible), `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml` complete.
 - [ ] Add generated unit test workflow.
 - [ ] Add patch proposal workflow with human approval.
 - [ ] Add memory beyond per-run state.
@@ -276,7 +286,15 @@ Acceptance checks:
  - [x] Day 11: Evaluation pipeline — retrieval metrics (Hit@K, Recall@K, Precision@K, MRR), comparative benchmarks (Dense vs BM25 vs Hybrid), and answer evaluation. 117/117 tests passing.
  - [x] Backlog Task 1: Add LangGraph orchestration engine with StateGraph, safe tool adapters, memory checkpointing, and side-by-side execution mode. 131/131 tests passing.
  - [x] Backlog Task 2: Add local Hugging Face embeddings (sentence-transformers), config support, and comparative benchmark evaluation. 137/137 tests passing (Dense Hit@5 leaped from 24% to 100%, MRR from 0.143 to 0.960).
- - [ ] Day 12: API, Docker, Configuration, Logging — Dockerfile, docker-compose, structured logging, health checks, and production readiness.
+ - [x] Production Step 1: make `POST /v1/agent/run` LangGraph-only; remove custom-engine request/config selection; verify the regression suite. `136 passed`.
+ - [x] Production Step 2: secure remote GitHub repository ingestion. `147 passed`.
+ - [x] Production Step 3: multi-language Tree-sitter parsing. `153 passed`.
+ - [x] Production Step 4: authentication and tenancy.
+ - [x] Production Step 5A: durable ingestion jobs and worker queue (Postgres FOR UPDATE SKIP LOCKED queue, worker runner, async enqueue & status APIs).
+ - [x] Production Step 5B: Postgres-backed LangGraph checkpoints and agent-run persistence.
+ - [x] Production Step 5C: Redis-backed rate limits, concurrency controls, idempotency, caching, and job coordination.
+ - [x] Production Step 5D: Groq admission control, bounded retries, timeout handling, and graceful quota/outage responses.
+ - [x] Production Step 5E / Day 12: Structured logs, metrics, health checks, Dockerfile, docker-compose, CI/CD.
 
 ## Decision Log
 
@@ -296,6 +314,7 @@ Acceptance checks:
 | 2026-09-11 | Decouple Retrieval Evaluation from Generation Evaluation. | Allows empirical benchmarking of information retrieval quality (Recall, Precision, MRR) with $0 cost and zero LLM calls, isolating search defects from generation defects. |
 | 2026-09-16 | Add LangGraph as an alternative orchestration engine alongside custom ReAct loop. | Demonstrates production framework mastery alongside from-scratch loop internals; provides side-by-side benchmarkability with shared safety tool layer and state checkpointing. |
 | 2026-09-16 | Support local Hugging Face embeddings (`sentence-transformers/all-MiniLM-L6-v2`) in RAG pipeline. | Enables 100% offline, zero-cost semantic embedding generation and empirical comparison against hash pseudo-vectors and lexical BM25 baselines. |
+| 2026-10-02 | Use LangGraph as the sole deployed agent orchestrator. | A production API should have one execution path; dual custom/LangGraph support duplicates reliability and security work. The custom loop remains a learning reference temporarily. |
 
 ## Open Questions
 

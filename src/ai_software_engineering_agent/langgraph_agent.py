@@ -68,12 +68,13 @@ class LangGraphAgent:
         tool_registry: ToolRegistry,
         settings: Settings,
         max_steps: int | None = None,
+        checkpointer: Any | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.tool_registry = tool_registry
         self.settings = settings
         self.max_steps = max_steps or settings.agent_max_steps
-        self.checkpointer = MemorySaver()
+        self.checkpointer = checkpointer if checkpointer is not None else MemorySaver()
 
         # Build ChatModel adapter with bound native tools
         self._chat_model = CustomChatModel(llm_client=self.llm_client)
@@ -248,6 +249,17 @@ class LangGraphAgent:
                 return "end"
             return "tools"
 
+        def route_after_tools(state: AgentGraphState) -> str:
+            """Stop immediately after a terminal tool result.
+
+            In particular, the ``final_answer`` tool sets ``status`` to
+            ``finished``. Routing it back to the reasoner would spend another
+            LLM request after the answer had already been committed.
+            """
+            if state.get("status") in ("finished", "failed"):
+                return "end"
+            return "reasoner"
+
         workflow.add_node("reasoner", reasoner_node)
         workflow.add_node("tools", tools_node)
 
@@ -257,18 +269,22 @@ class LangGraphAgent:
             route_after_reasoner,
             {"tools": "tools", "end": END},
         )
-        workflow.add_edge("tools", "reasoner")
+        workflow.add_conditional_edges(
+            "tools",
+            route_after_tools,
+            {"reasoner": "reasoner", "end": END},
+        )
 
         return workflow.compile(checkpointer=self.checkpointer)
 
-    async def run(self, task: str) -> AgentResult:
+    async def run(self, task: str, thread_id: str | None = None) -> AgentResult:
         """Execute the task through the compiled LangGraph workflow."""
         if not task or not task.strip():
             raise AgentError("Task text cannot be empty.")
 
         t0 = time.perf_counter()
-        thread_id = str(uuid.uuid4())
-        config = {"configurable": {"thread_id": thread_id}}
+        active_thread_id = thread_id or str(uuid.uuid4())
+        config = {"configurable": {"thread_id": active_thread_id}}
 
         initial_state: AgentGraphState = {
             "messages": [
