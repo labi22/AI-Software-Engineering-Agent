@@ -87,7 +87,7 @@ class PostgresAgentRunStore:
                 """
                 CREATE TABLE IF NOT EXISTS agent_runs (
                     id UUID PRIMARY KEY,
-                    organization_id TEXT NOT NULL REFERENCES tenant_organizations(id),
+                    organization_id TEXT NOT NULL,
                     repo_id TEXT,
                     task TEXT NOT NULL,
                     status TEXT NOT NULL,

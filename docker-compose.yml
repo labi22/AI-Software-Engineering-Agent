@@ -43,6 +43,7 @@ services:
       - "8000:8000"
     environment:
       - LLM_PROVIDER=groq
+      - LLM_MODEL=openai/gpt-oss-20b
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/agent_db
@@ -50,6 +51,9 @@ services:
       - EMBEDDING_PROVIDER=huggingface
       - VECTOR_STORE_TYPE=pgvector
       - AUTH_ENABLED=false
+      - ALLOWED_REPOSITORY_ROOTS=/repos
+    volumes:
+      - D:/:/repos/D
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,12 +74,16 @@ services:
     command: ["python", "-m", "ai_software_engineering_agent.worker"]
     environment:
       - LLM_PROVIDER=groq
+      - LLM_MODEL=openai/gpt-oss-20b
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/agent_db
       - REDIS_URL=redis://redis:6379/0
       - EMBEDDING_PROVIDER=huggingface
       - VECTOR_STORE_TYPE=pgvector
+      - ALLOWED_REPOSITORY_ROOTS=/repos
+    volumes:
+      - D:/:/repos/D
     depends_on:
       postgres:
         condition: service_healthy

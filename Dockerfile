@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
+COPY src/ ./src/
 RUN pip install --no-cache-dir --upgrade pip wheel && \
-    pip install --no-cache-dir ".[postgres,parsers]"
+    pip install --no-cache-dir ".[postgres,parsers,huggingface]"
 
 # Final runtime image
 FROM python:3.11-slim
@@ -34,7 +35,7 @@ RUN useradd -m -u 1000 appuser && \
 COPY src/ /app/src/
 COPY pyproject.toml README.md /app/
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[postgres,parsers,huggingface]"
 
 USER appuser
 

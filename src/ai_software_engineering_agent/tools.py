@@ -208,6 +208,7 @@ def create_search_code_handler(rag_service: Any, repo_id: str | None = None) -> 
     """Create a search_code tool handler bound to a RAGService instance."""
 
     async def search_code_handler(arguments: dict[str, Any], state: AgentState) -> str:
+        from .models import Citation
         query = arguments.get("query", "")
         if not query:
             return "Error: 'query' argument is required."
@@ -225,6 +226,27 @@ def create_search_code_handler(rag_service: Any, repo_id: str | None = None) -> 
 
         if not results:
             return f"No code found for query: '{query}'"
+
+        # Accumulate citations from retrieved chunks into agent state so
+        # final_answer can surface them without requiring answer_query.
+        existing_keys = {
+            (c.file_path, c.start_line, c.end_line) for c in state.citations
+        }
+        for res in results:
+            chunk = res.chunk
+            key = (chunk.file_path, chunk.start_line, chunk.end_line)
+            if key not in existing_keys:
+                existing_keys.add(key)
+                state.citations.append(
+                    Citation(
+                        file_path=chunk.file_path,
+                        start_line=chunk.start_line,
+                        end_line=chunk.end_line,
+                        symbol_name=chunk.symbol_name,
+                        snippet=chunk.content[:200],
+                        is_verified=True,
+                    )
+                )
 
         sections: list[str] = []
         for i, res in enumerate(results, 1):

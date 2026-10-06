@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "langgraph>=0.2.0,<1.0.0",
     "langchain-core>=0.3.0,<1.0.0",
+    "redis[hiredis]>=5.0,<6.0",
 ]
 
 [project.optional-dependencies]

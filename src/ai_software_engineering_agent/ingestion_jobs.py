@@ -129,7 +129,7 @@ class PostgresIngestionJobStore:
                 """
                 CREATE TABLE IF NOT EXISTS ingestion_jobs (
                     id UUID PRIMARY KEY,
-                    organization_id TEXT NOT NULL REFERENCES tenant_organizations(id),
+                    organization_id TEXT NOT NULL,
                     payload JSONB NOT NULL,
                     status TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed')),
                     attempts INTEGER NOT NULL DEFAULT 0,

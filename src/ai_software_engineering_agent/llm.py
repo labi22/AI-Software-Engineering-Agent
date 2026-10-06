@@ -108,6 +108,21 @@ class OpenAIResponsesClient:
         if request.messages is not None:
             return await self._generate_chat_completion(request)
 
+        # Groq and Ollama don't support the OpenAI Responses API — always use Chat Completions
+        if self._provider in ("groq", "ollama"):
+            messages: list[dict[str, Any]] = []
+            if request.system_instruction:
+                messages.append({"role": "system", "content": request.system_instruction})
+            messages.append({"role": "user", "content": request.prompt})
+            return await self._generate_chat_completion(
+                LLMRequest(
+                    prompt=request.prompt,
+                    system_instruction=request.system_instruction,
+                    messages=messages,
+                    tools=request.tools,
+                )
+            )
+
         request_args: dict[str, Any] = {"model": self._model, "input": request.prompt}
         if request.system_instruction:
             request_args["instructions"] = request.system_instruction

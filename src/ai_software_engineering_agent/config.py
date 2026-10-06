@@ -51,6 +51,13 @@ class Settings:
         if provider not in ("openai", "groq", "ollama", "fake"):
             raise ValueError("LLM_PROVIDER must be 'openai', 'groq', 'ollama', or 'fake'.")
 
+        default_model = {
+            "groq": "llama-3.3-70b-versatile",
+            "openai": "gpt-4o-mini",
+            "ollama": "llama3",
+            "fake": "fake-model",
+        }.get(provider, "gpt-4o-mini")
+
         try:
             timeout = float(environment.get("LLM_REQUEST_TIMEOUT_SECONDS", "30"))
         except ValueError as error:
@@ -144,7 +151,7 @@ class Settings:
 
         return cls(
             llm_provider=provider,
-            llm_model=environment.get("LLM_MODEL", "gpt-5.2").strip(),
+            llm_model=environment.get("LLM_MODEL", default_model).strip(),
             openai_api_key=environment.get("OPENAI_API_KEY") or None,
             request_timeout_seconds=timeout,
             allowed_repository_roots=roots,
