@@ -124,16 +124,21 @@ def test_openai_adapter_normalizes_a_response_without_a_network_call():
 
 
 def test_openai_compatible_adapter_preserves_the_configured_provider():
+    # Groq is routed through Chat Completions, not the Responses API.
+    # The fake client must expose .chat.completions.create accordingly.
+    fake_message = type("Message", (), {"content": "Groq output.", "tool_calls": None})()
+    fake_choice = type("Choice", (), {"message": fake_message})()
     fake_response = type(
         "Response",
         (),
-        {"output_text": "Groq output.", "model": "openai/gpt-oss-20b", "id": "resp_456"},
+        {"choices": [fake_choice], "model": "openai/gpt-oss-20b", "id": "resp_456"},
     )()
-    fake_client = type(
-        "Client",
-        (),
-        {"responses": type("Responses", (), {"create": lambda self, **_: fake_response})()},
+    fake_completions = type(
+        "Completions", (), {"create": lambda self, **_: fake_response}
     )()
+    fake_chat = type("Chat", (), {"completions": fake_completions})()
+    fake_client = type("Client", (), {"chat": fake_chat})()
+
     adapter = OpenAIResponsesClient(
         api_key="not-used-by-the-fake",
         model="openai/gpt-oss-20b",
@@ -145,6 +150,7 @@ def test_openai_compatible_adapter_preserves_the_configured_provider():
     result = asyncio.run(adapter.generate(LLMRequest(prompt="Hello")))
 
     assert result.provider == "groq"
+    assert result.text == "Groq output."
 
 
 def test_health_does_not_require_an_api_key():

@@ -140,7 +140,7 @@ class LangGraphAgent:
             # Check if LLM produced tool calls
             tool_calls = getattr(response, "tool_calls", None)
             if not tool_calls:
-                # Direct answer without tool call
+                # Direct answer without tool call — carry citations accumulated so far
                 answer = thinking_content.strip() or "Task completed."
                 return {
                     "messages": [response],
@@ -148,6 +148,7 @@ class LangGraphAgent:
                     "status": "finished",
                     "final_answer": answer,
                     "trace_steps": trace_steps,
+                    "citations": state.get("citations", []),
                 }
 
             return {

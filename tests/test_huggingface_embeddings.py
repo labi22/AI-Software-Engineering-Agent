@@ -43,8 +43,7 @@ async def test_huggingface_embedding_client_with_mock_model():
     """HuggingFaceEmbeddingClient encodes texts and normalizes vectors."""
     mock_model = MagicMock()
     # 2 sample 4-dimensional vectors
-    import numpy as np
-
+    np = pytest.importorskip("numpy", reason="numpy not installed (requires huggingface extra)")
     fake_vectors = np.array([[0.6, 0.8, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], dtype=float)
     mock_model.encode.return_value = fake_vectors
 
@@ -103,8 +102,7 @@ async def test_huggingface_embedding_client_error_handling():
 @pytest.mark.asyncio
 async def test_huggingface_integration_with_vector_store():
     """VectorStore correctly indexes and queries 384-dimensional embeddings."""
-    import numpy as np
-
+    np = pytest.importorskip("numpy", reason="numpy not installed (requires huggingface extra)")
     mock_model = MagicMock()
     mock_model.encode.return_value = np.ones((1, 384), dtype=float) / math.sqrt(384)
 
