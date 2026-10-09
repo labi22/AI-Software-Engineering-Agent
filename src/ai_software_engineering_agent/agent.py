@@ -12,6 +12,7 @@ from typing import Any, Iterable
 from .agent_state import AgentResult, AgentState, AgentStatus, Observation, ToolCall
 from .config import Settings
 from .llm import LLMClient, LLMConfigurationError, LLMRequest
+from .rag import extract_citations
 from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,8 @@ class Agent:
             else:
                 # LLM produced a direct answer without a tool call
                 state.add_thinking_step(response_text)
-                state.finish(parsed)
+                citations = extract_citations(parsed, retrieved_chunks=[])
+                state.finish(parsed, citations=citations)
                 logger.info("Agent finished with direct answer at step %d", state.current_step)
 
         answer = state.final_answer or "The agent could not produce an answer."
@@ -248,7 +250,8 @@ class Agent:
                     )
                     break
                 state.add_thinking_step(answer)
-                state.finish(answer)
+                citations = extract_citations(answer, retrieved_chunks=[])
+                state.finish(answer, citations=citations)
                 break
 
             reasoning = llm_response.text.strip() or "The model requested a tool call."
@@ -296,7 +299,10 @@ class Agent:
         return (
             "You are an expert AI software engineering agent. Use the provided local tools "
             "to inspect the codebase when needed. Call final_answer only when you have a "
-            "complete answer. Cite file paths and line numbers when the tool results provide them.\n\n"
+            "complete answer. For every technical claim, function, or class you reference, "
+            "cite the exact source using the format: `[filepath:start_line-end_line]` "
+            "(e.g. `[src/curve.py:12-45]`), using the file paths and line numbers the tool "
+            "results provide.\n\n"
             "IMPORTANT: When calling final_answer, you MUST pass your response as valid JSON "
             'with an \"answer\" key, for example: {"answer": "your answer text here"}. '
             "Never place raw text or markdown directly as the arguments value."
@@ -329,7 +335,8 @@ class Agent:
             "2. Use `search_code` to find relevant code snippets in the codebase.\n"
             "3. Use `answer_query` when you want a complete cited answer generated from retrieved code.\n"
             "4. Always call `final_answer` when you are done — do not just stop.\n"
-            "5. Cite specific files and line numbers when referencing code.\n"
+            "5. For every technical claim, function, or class you reference, cite the exact "
+            "source using the format: `[filepath:start_line-end_line]` (e.g. `[src/curve.py:12-45]`).\n"
             "6. If a tool returns an error, try a different approach or query.\n\n"
             f"## {tools_block}\n"
         )

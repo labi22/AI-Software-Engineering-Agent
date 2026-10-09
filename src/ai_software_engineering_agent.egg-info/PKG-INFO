@@ -11,11 +11,19 @@ Requires-Dist: uvicorn[standard]<1.0,>=0.30
 Requires-Dist: pydantic<3.0,>=2.0
 Requires-Dist: langgraph<1.0.0,>=0.2.0
 Requires-Dist: langchain-core<1.0.0,>=0.3.0
+Requires-Dist: redis[hiredis]<6.0,>=5.0
 Provides-Extra: postgres
 Requires-Dist: psycopg[binary]<4.0,>=3.1; extra == "postgres"
 Requires-Dist: pgvector<1.0,>=0.2; extra == "postgres"
 Provides-Extra: huggingface
 Requires-Dist: sentence-transformers<7.0.0,>=2.2.0; extra == "huggingface"
+Provides-Extra: parsers
+Requires-Dist: tree-sitter<0.26,>=0.25; extra == "parsers"
+Requires-Dist: tree-sitter-javascript<0.24,>=0.23; extra == "parsers"
+Requires-Dist: tree-sitter-typescript<0.24,>=0.23; extra == "parsers"
+Requires-Dist: tree-sitter-java<0.24,>=0.23; extra == "parsers"
+Requires-Dist: tree-sitter-go<0.24,>=0.23; extra == "parsers"
+Requires-Dist: tree-sitter-c-sharp<0.24,>=0.23; extra == "parsers"
 Provides-Extra: dev
 Requires-Dist: pytest<9.0,>=8.0; extra == "dev"
 Requires-Dist: httpx<1.0,>=0.27; extra == "dev"
@@ -28,8 +36,8 @@ A repository-agnostic AI software engineering assistant that scans, ingests, ind
 ## Features
 
 - **FastAPI REST API**: Endpoints for text generation, repository ingestion, grounded hybrid RAG querying, and agentic task execution.
-- **Repository Ingestion & Safe Discovery**: Scans target codebases with security guardrails (`ALLOWED_REPOSITORY_ROOTS`), ignoring binary, build, cache, and lock files.
-- **Syntax & Line-Aware Code Chunking**: AST-based chunking for Python (classes, functions, methods) and sliding-window chunking for documentation and other files, tracking exact start and end line ranges.
+- **Repository Ingestion & Safe Discovery**: Ingests approved local paths or public HTTPS GitHub repositories using isolated shallow clones, strict resource limits, and automatic cleanup; ignores binary, build, cache, lock, and symlinked files.
+- **Syntax & Line-Aware Code Chunking**: Python AST extraction plus optional Tree-sitter symbol extraction for JavaScript/TypeScript/TSX, Java, Go, and C#; malformed and unsupported files safely fall back to line-window chunks with exact line ranges.
 - **BM25 Lexical Search Engine**: In-memory Okapi BM25 index with a code tokenizer handling `snake_case`, `camelCase`, and code identifiers.
 - **Hybrid Retrieval (Reciprocal Rank Fusion)**: Blends dense semantic embeddings and sparse lexical BM25 rankings ($k=60$) with an exact symbol definition reranker.
 - **Metadata Filtering**: Scopes queries by repository ID, file path glob patterns (e.g. `models/*.py`), programming language, or named code symbols only.
@@ -81,6 +89,12 @@ Install the project with development dependencies:
 python -m pip install -e .[dev]
 ```
 
+Enable multi-language Tree-sitter parsing (recommended for deployed ingestion):
+
+```powershell
+python -m pip install -e .[dev,parsers]
+```
+
 Configure your environment:
 
 ```powershell
@@ -106,6 +120,19 @@ Invoke-RestMethod -Method Post `
   -Uri "http://127.0.0.1:8000/v1/repositories/ingest" `
   -ContentType "application/json" `
   -Body '{"repository_path": "D:/Yield_Curve_Construction_and_Bond_Valuation_&_Risk_Lab", "repo_id": "bond-lab"}'
+```
+
+For a public GitHub repository, provide `github_url` instead of `repository_path`. Only canonical public `https://github.com/<owner>/<repository>` URLs are accepted; SSH URLs, credentials, query strings, arbitrary Git hosts, and redirects are not supported.
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:8000/v1/repositories/ingest" `
+  -ContentType "application/json" `
+  -Body '{
+    "github_url": "https://github.com/labi22/Fixed-Income-Analytics-Bond-Valuation-Platform",
+    "ref": "main",
+    "repo_id": "fixed-income-platform"
+  }'
 ```
 
 Response:
@@ -305,6 +332,24 @@ Invoke-RestMethod -Method Post `
 | `CHUNK_SIZE_LINES` | Maximum line count per code chunk | `60` |
 | `CHUNK_OVERLAP_LINES` | Line overlap for sliding-window chunking | `15` |
 | `AGENT_MAX_STEPS` | Default step budget for the ReAct agent loop | `10` |
+| `GITHUB_CLONE_TIMEOUT_SECONDS` | Maximum duration for a remote clone | `60` |
+| `GITHUB_MAX_REPOSITORY_BYTES` | Maximum temporary clone and ingestible-source size | `104857600` (100 MiB) |
+| `GITHUB_MAX_FILES` | Maximum ingestible source/document files from a remote repository | `10000` |
+| `AUTH_ENABLED` | Require API-key authentication on non-health endpoints | `false` |
+| `AUTH_API_KEY_HASHES` | Comma-separated `key_id:sha256_digest:organization_id` credentials | Empty |
+
+Tree-sitter grammars are an optional `parsers` dependency extra. Without them,
+the service continues to ingest every supported text extension using line-window
+chunking, but it will not attach non-Python class/function symbols.
+
+When `AUTH_ENABLED=true`, `DATABASE_URL` is required and requests to generation, repository ingestion, RAG,
+agent, and MCP endpoints must include `X-API-Key`. Store only a SHA-256 digest
+of each API key in `AUTH_API_KEY_HASHES`; generate one locally with
+`python -c "import hashlib; print(hashlib.sha256(b'your-key').hexdigest())"`.
+The Postgres control plane initializes `tenant_organizations`, `tenant_api_keys`,
+and `tenant_repositories` idempotently. It persists organization/repository
+ownership and configured API-key hashes across restarts and API replicas. The
+in-memory ownership implementation is retained only for isolated local tests.
 
 ## Tests
 

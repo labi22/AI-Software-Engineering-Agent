@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Protocol, Sequence
 
+from .coordination import CoordinationService
 from .embeddings import EmbeddingClient
 from .lexical import BM25Index, CodeTokenizer
 from .models import (
@@ -196,11 +198,14 @@ class HybridRetriever:
         bm25_index: BM25Index,
         embedding_client: EmbeddingClient,
         reranker: Reranker | None = None,
+        coordination: CoordinationService | None = None,
     ) -> None:
         self.vector_store = vector_store
         self.bm25_index = bm25_index
         self.embedding_client = embedding_client
         self.reranker = reranker or SymbolBoostReranker()
+        self.coordination = coordination
+        self.last_cache_hit: bool | None = None
 
     async def retrieve(
         self,
@@ -221,8 +226,17 @@ class HybridRetriever:
             results = self.bm25_index.search(query=query, limit=limit, filter=filter)
             return self.reranker.rerank(query, results)
 
-        # 2. Dense retrieval
-        query_embedding = await self.embedding_client.embed_query(query)
+        # 2. Dense retrieval — check the embedding cache before hitting the embedding API
+        text_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        query_embedding: list[float] | None = None
+        if self.coordination is not None:
+            query_embedding = await self.coordination.get_cached_embedding(text_hash)
+            self.last_cache_hit = query_embedding is not None
+
+        if query_embedding is None:
+            query_embedding = await self.embedding_client.embed_query(query)
+            if self.coordination is not None:
+                await self.coordination.set_cached_embedding(text_hash, query_embedding)
         dense_results = await self.vector_store.search(
             query_embedding=query_embedding,
             limit=limit * 2 if strategy == RetrievalStrategy.HYBRID else limit,

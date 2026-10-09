@@ -4,6 +4,7 @@ uvicorn[standard]<1.0,>=0.30
 pydantic<3.0,>=2.0
 langgraph<1.0.0,>=0.2.0
 langchain-core<1.0.0,>=0.3.0
+redis[hiredis]<6.0,>=5.0
 
 [dev]
 pytest<9.0,>=8.0
@@ -12,6 +13,14 @@ pytest-asyncio<1.0,>=0.23
 
 [huggingface]
 sentence-transformers<7.0.0,>=2.2.0
+
+[parsers]
+tree-sitter<0.26,>=0.25
+tree-sitter-javascript<0.24,>=0.23
+tree-sitter-typescript<0.24,>=0.23
+tree-sitter-java<0.24,>=0.23
+tree-sitter-go<0.24,>=0.23
+tree-sitter-c-sharp<0.24,>=0.23
 
 [postgres]
 psycopg[binary]<4.0,>=3.1

@@ -244,6 +244,9 @@ class RAGQueryResponse(BaseModel):
     model: str
     provider: str
     strategy_used: str = "hybrid"
+    retrieval_ms: float = 0.0
+    generation_ms: float = 0.0
+    cache_hit: bool | None = None
 
 
 class AgentStepModel(BaseModel):
@@ -819,6 +822,9 @@ def create_app(
             model=response.model,
             provider=response.provider,
             strategy_used=response.strategy_used,
+            retrieval_ms=response.retrieval_ms,
+            generation_ms=response.generation_ms,
+            cache_hit=response.cache_hit,
         )
 
     @app.post("/v1/agent/run", response_model=AgentRunResponse)
@@ -1246,6 +1252,7 @@ def _get_rag_service(request: Request) -> RAGService:
             vector_store=vector_store,
             embedding_client=embedding_client,
             llm_client=llm_client,
+            coordination=request.app.state.coordination_service,
             settings=request.app.state.settings,
         )
         request.app.state.rag_service = service

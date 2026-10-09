@@ -2,14 +2,21 @@
 Production benchmark script for the AI Software Engineering Agent.
 
 Measures:
-  1. RAG query latency (p50, p95, p99) + Recall@5
-  2. Embedding cache hit rate
+  1. RAG query latency (p50, p95, p99) + Recall@5, plus a real retrieval-vs-
+     generation split read directly from the API (retrieval_ms / generation_ms)
+  2. Embedding cache hit rate, read directly from the API's cache_hit field
+     (requires the embedding cache to be wired into HybridRetriever -- see
+     retrieval.py / rag.py / app.py)
   3. Ingestion throughput (chunks/sec, files/sec)
-  4. Agent run total duration
+  4. Agent run duration, citations, and reasoning steps (n=len(AGENT_QUERIES)*n_runs)
+
+Any failed query's full status/response body is captured under
+errors_detail in the JSON output -- check that first, then cross-reference
+the API server's own console/log output at the matching timestamp.
 
 Usage:
   python scripts/benchmark_production.py
-  python scripts/benchmark_production.py --url http://127.0.0.1:8000 --repo-id yield-curve-lab
+  python scripts/benchmark_production.py --url http://127.0.0.1:8000 --repo-id yield-curve-lab --agent-runs 5
 """
 
 from __future__ import annotations
@@ -85,6 +92,8 @@ RAG_QUERIES = [
 AGENT_QUERIES = [
     "How is zero_rate calculated in the yield curve module?",
     "What tools or classes are used for bond valuation?",
+    "Explain how duration and convexity are related in this codebase.",
+    "Find and explain the discount factor calculation.",
 ]
 
 # ---------------------------------------------------------------------------
@@ -98,9 +107,12 @@ def benchmark_rag(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
     print(f"{'='*60}")
 
     latencies_ms: list[float] = []
+    retrieval_ms_list: list[float] = []
+    generation_ms_list: list[float] = []
     recall_hits = 0
     total_queries = 0
     errors = 0
+    error_log: list[dict] = []
 
     for query in RAG_QUERIES:
         for run in range(n_runs):
@@ -118,12 +130,30 @@ def benchmark_rag(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
             elapsed = (time.perf_counter() - t0) * 1000
 
             if status != 200:
-                print(f"  x [{status}] {query[:50]!r}")
+                detail = body.get("detail", body) if isinstance(body, dict) else body
+                print(f"  x [{status}] run={run+1} {query!r}")
+                print(f"      detail: {detail}")
                 errors += 1
+                error_log.append({
+                    "query": query,
+                    "run": run + 1,
+                    "status": status,
+                    "detail": detail,
+                    "elapsed_ms": round(elapsed, 1),
+                })
                 continue
 
             latencies_ms.append(elapsed)
             total_queries += 1
+
+            # Real per-component timing, now returned by the API directly
+            # (no more cold/warm proxy guessing).
+            r_ms = body.get("retrieval_ms")
+            g_ms = body.get("generation_ms")
+            if r_ms is not None:
+                retrieval_ms_list.append(r_ms)
+            if g_ms is not None:
+                generation_ms_list.append(g_ms)
 
             # Recall@5: did we get at least 1 retrieved chunk?
             chunks = body.get("retrieved_chunks", [])
@@ -131,10 +161,11 @@ def benchmark_rag(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
                 recall_hits += 1
 
             marker = "ok" if chunks else "miss"
-            print(f"  [{marker}] run={run+1} {elapsed:7.1f}ms  {query[:55]!r}")
+            split = f"  (retrieval={r_ms}ms, generation={g_ms}ms)" if r_ms is not None else ""
+            print(f"  [{marker}] run={run+1} {elapsed:7.1f}ms  {query[:55]!r}{split}")
 
     if not latencies_ms:
-        return {"error": "All RAG queries failed"}
+        return {"error": "All RAG queries failed", "errors_detail": error_log}
 
     latencies_ms.sort()
     recall_at_5 = recall_hits / total_queries if total_queries else 0
@@ -142,6 +173,7 @@ def benchmark_rag(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
     result = {
         "total_queries": total_queries,
         "errors": errors,
+        "errors_detail": error_log,
         "recall_at_5": round(recall_at_5 * 100, 1),
         "latency_p50_ms": round(statistics.median(latencies_ms), 1),
         "latency_p95_ms": round(latencies_ms[int(len(latencies_ms) * 0.95)], 1),
@@ -149,15 +181,29 @@ def benchmark_rag(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
         "latency_mean_ms": round(statistics.mean(latencies_ms), 1),
         "latency_min_ms": round(min(latencies_ms), 1),
         "latency_max_ms": round(max(latencies_ms), 1),
-        "note": "Includes LLM generation time. See retrieval_only for pure retrieval latency.",
+        "note": "Full end-to-end latency incl. LLM generation.",
     }
+
+    if retrieval_ms_list:
+        retrieval_ms_list.sort()
+        result["retrieval_ms_p50"] = round(statistics.median(retrieval_ms_list), 1)
+        result["retrieval_ms_mean"] = round(statistics.mean(retrieval_ms_list), 1)
+    if generation_ms_list:
+        generation_ms_list.sort()
+        result["generation_ms_p50"] = round(statistics.median(generation_ms_list), 1)
+        result["generation_ms_mean"] = round(statistics.mean(generation_ms_list), 1)
 
     print(f"\n  Results:")
     print(f"    Recall@5:     {result['recall_at_5']}%")
+    print(f"    Errors:       {errors} / {total_queries + errors}  (see errors_detail in JSON output)")
     print(f"    p50 latency:  {result['latency_p50_ms']} ms  (full RAG incl. LLM)")
     print(f"    p95 latency:  {result['latency_p95_ms']} ms")
     print(f"    p99 latency:  {result['latency_p99_ms']} ms")
     print(f"    mean latency: {result['latency_mean_ms']} ms")
+    if retrieval_ms_list:
+        print(f"    retrieval (embed+search) p50/mean: {result['retrieval_ms_p50']} / {result['retrieval_ms_mean']} ms")
+    if generation_ms_list:
+        print(f"    Groq generation p50/mean:          {result['generation_ms_p50']} / {result['generation_ms_mean']} ms")
 
     return result
 
@@ -166,130 +212,72 @@ def benchmark_rag(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
 # Benchmark 1b: Retrieval-only latency (no LLM — pure embed+search)
 # ---------------------------------------------------------------------------
 
-def benchmark_retrieval_only(base_url: str, repo_id: str, n_runs: int = 5) -> dict:
-    """Hit /v1/rag/query with a tiny LLM-free path by using the metrics endpoint
-    to time just the embedding+vector-search step.
-
-    Since the public API always calls the LLM, we approximate retrieval latency
-    by measuring the FIRST query (cold embed) vs subsequent identical queries
-    (warm embed, result from same pgvector index) and isolating the diff.
-    """
-    print(f"\n{'='*60}")
-    print("BENCHMARK 1b: Retrieval-Only Latency (embed + vector search)")
-    print(f"  Repeating same query {n_runs} times to isolate cache effect")
-    print(f"{'='*60}")
-
-    # Use a single stable query
-    query = "How is zero_rate calculated?"
-    runs: list[float] = []
-
-    for i in range(n_runs):
-        t0 = time.perf_counter()
-        status, body = _post(
-            f"{base_url}/v1/rag/query",
-            {"query": query, "repo_id": repo_id, "top_k": 5,
-             "retrieval_strategy": "hybrid"},
-            timeout=60,
-        )
-        elapsed = (time.perf_counter() - t0) * 1000
-        label = "cold" if i == 0 else f"warm{i}"
-        if status == 200:
-            runs.append(elapsed)
-            chunks = len(body.get("retrieved_chunks", []))
-            print(f"  [{label}] {elapsed:7.1f}ms  chunks={chunks}")
-        else:
-            print(f"  [{label}] ERROR {status}")
-
-    if len(runs) < 2:
-        return {"error": "Not enough successful runs"}
-
-    cold = runs[0]
-    warm_runs = runs[1:]
-    warm_mean = statistics.mean(warm_runs)
-    warm_min = min(warm_runs)
-
-    # Retrieval-only estimate: minimum warm run (LLM variance removed as much as possible)
-    # The LLM adds ~2-15s; the embedding+search portion is stable across warm runs.
-    # We report warm_min as the best proxy for retrieval latency.
-    result = {
-        "cold_ms": round(cold, 1),
-        "warm_mean_ms": round(warm_mean, 1),
-        "warm_min_ms": round(warm_min, 1),
-        "warm_runs": [round(r, 1) for r in warm_runs],
-        "note": (
-            "Total latency includes LLM generation. "
-            "warm_min_ms is best proxy for retrieval+embed path "
-            "when LLM response time is consistent."
-        ),
-    }
-
-    print(f"\n  Results:")
-    print(f"    Cold run:      {result['cold_ms']} ms")
-    print(f"    Warm mean:     {result['warm_mean_ms']} ms")
-    print(f"    Warm min:      {result['warm_min_ms']} ms  (best retrieval proxy)")
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Benchmark 2: Embedding cache hit rate
-# ---------------------------------------------------------------------------
-
 def benchmark_embedding_cache(base_url: str, repo_id: str) -> dict:
+    """Send the same query 10x and read the real retrieval_ms + cache_hit fields
+    the API now returns directly. This replaces the old wall-clock cold/warm
+    proxy, which was dominated by Groq generation-time noise and couldn't
+    actually tell a cache hit from random variance.
+    """
     print(f"\n{'='*60}")
     print("BENCHMARK 2: Embedding Cache")
     print("  Sending 10 identical queries back-to-back.")
-    print("  If Redis embedding cache is wired in, runs 2-10 should be")
-    print("  measurably faster than run 1 (skipped embed API call).")
+    print("  Reading retrieval_ms + cache_hit directly from the API response")
+    print("  (isolated from Groq generation time, not inferred from wall clock).")
     print(f"{'='*60}")
 
     query = "How is zero_rate calculated?"
-    latencies: list[float] = []
     N = 10
+    retrieval_ms_runs: list[float] = []
+    cache_hits: list[bool] = []
+    errors = 0
 
     for i in range(N):
-        t0 = time.perf_counter()
-        status, _ = _post(
+        status, body = _post(
             f"{base_url}/v1/rag/query",
-            {"query": query, "repo_id": repo_id, "top_k": 5},
+            {"query": query, "repo_id": repo_id, "top_k": 5, "retrieval_strategy": "hybrid"},
             timeout=60,
         )
-        elapsed = (time.perf_counter() - t0) * 1000
-        label = "cold" if i == 0 else f"warm{i:02d}"
+        label = "miss(expected)" if i == 0 else f"run{i:02d}"
         if status == 200:
-            latencies.append(elapsed)
-            print(f"  [{label}] {elapsed:7.1f}ms")
+            r_ms = body.get("retrieval_ms")
+            hit = body.get("cache_hit")
+            if r_ms is not None:
+                retrieval_ms_runs.append(r_ms)
+            cache_hits.append(bool(hit))
+            print(f"  [{label}] retrieval={r_ms}ms  cache_hit={hit}")
         else:
-            print(f"  [{label}] ERROR {status}")
+            errors += 1
+            print(f"  [{label}] ERROR {status}: {body.get('detail', body) if isinstance(body, dict) else body}")
 
-    if len(latencies) < 2:
-        return {"error": "Not enough data"}
+    if len(retrieval_ms_runs) < 2:
+        return {"error": "Not enough successful runs", "errors": errors}
 
-    cold = latencies[0]
-    warm = latencies[1:]
-    warm_mean = statistics.mean(warm)
-    warm_min = min(warm)
-    speedup = round(cold / warm_mean, 2) if warm_mean > 0 else 1.0
-    # Only claim savings if warm is actually faster
-    savings_pct = round((1 - warm_mean / cold) * 100, 1) if cold > warm_mean else 0.0
+    first_call_ms = retrieval_ms_runs[0]
+    repeat_calls_ms = retrieval_ms_runs[1:]
+    repeat_mean_ms = statistics.mean(repeat_calls_ms)
+    hit_count = sum(1 for h in cache_hits[1:] if h)
+    hit_rate_pct = round(100 * hit_count / len(cache_hits[1:]), 1) if len(cache_hits) > 1 else 0.0
+    speedup = round(first_call_ms / repeat_mean_ms, 2) if repeat_mean_ms > 0 else 1.0
 
     result = {
-        "cold_ms": round(cold, 1),
-        "warm_mean_ms": round(warm_mean, 1),
-        "warm_min_ms": round(warm_min, 1),
-        "speedup_factor": speedup,
-        "estimated_cache_savings_pct": savings_pct,
+        "first_call_retrieval_ms": round(first_call_ms, 1),
+        "repeat_calls_retrieval_ms_mean": round(repeat_mean_ms, 1),
+        "cache_hit_rate_pct": hit_rate_pct,
+        "retrieval_speedup_factor": speedup,
+        "errors": errors,
         "note": (
-            "Speedup > 1 means cache is reducing embedding latency. "
-            "Speedup < 1 means LLM variance dominates and cache effect is masked."
+            "retrieval_ms and cache_hit are read directly from the API response "
+            "(rag.py times retrieval and generation separately; retrieval.py now "
+            "checks the embedding cache before calling the embedding API). This "
+            "isolates the cache effect from Groq generation-time variance."
         ),
     }
 
     print(f"\n  Results:")
-    print(f"    Cold run:      {result['cold_ms']} ms")
-    print(f"    Warm mean:     {result['warm_mean_ms']} ms")
-    print(f"    Speedup:       {result['speedup_factor']}x")
-    print(f"    Cache savings: ~{result['estimated_cache_savings_pct']}%")
+    print(f"    First call (miss) retrieval:  {result['first_call_retrieval_ms']} ms")
+    print(f"    Repeat calls retrieval mean:  {result['repeat_calls_retrieval_ms_mean']} ms")
+    print(f"    Cache hit rate (runs 2-10):   {result['cache_hit_rate_pct']}%")
+    print(f"    Retrieval speedup:            {result['retrieval_speedup_factor']}x")
 
     return result
 
@@ -383,57 +371,78 @@ def benchmark_ingestion(base_url: str) -> dict:
 # Benchmark 4: Agent run duration
 # ---------------------------------------------------------------------------
 
-def benchmark_agent(base_url: str, repo_id: str) -> dict:
+def benchmark_agent(base_url: str, repo_id: str, n_runs: int = 3) -> dict:
+    total_calls = len(AGENT_QUERIES) * n_runs
     print(f"\n{'='*60}")
     print("BENCHMARK 4: Agent Run Duration")
-    print(f"  Queries: {len(AGENT_QUERIES)}")
+    print(f"  Queries: {len(AGENT_QUERIES)}  x  {n_runs} runs each  ({total_calls} total)")
     print(f"{'='*60}")
 
     durations_ms: list[float] = []
     citation_counts: list[int] = []
+    steps_per_run: list[int] = []
     errors = 0
+    error_log: list[dict] = []
 
     for query in AGENT_QUERIES:
-        print(f"  Running: {query!r}")
-        t0 = time.perf_counter()
-        status, body = _post(
-            f"{base_url}/v1/agent/run",
-            {
-                "task": query,
-                "repo_id": repo_id,
-                "max_steps": 5,
-            },
-            timeout=120,
-        )
-        elapsed = (time.perf_counter() - t0) * 1000
+        for run in range(n_runs):
+            print(f"  Running (run {run+1}/{n_runs}): {query!r}")
+            t0 = time.perf_counter()
+            status, body = _post(
+                f"{base_url}/v1/agent/run",
+                {
+                    "task": query,
+                    "repo_id": repo_id,
+                    "max_steps": 5,
+                },
+                timeout=120,
+            )
+            elapsed = (time.perf_counter() - t0) * 1000
 
-        if status != 200:
-            print(f"    ✗ [{status}] {body.get('detail', body)}")
-            errors += 1
-            continue
+            if status != 200:
+                detail = body.get("detail", body) if isinstance(body, dict) else body
+                print(f"    x [{status}] {detail}")
+                errors += 1
+                error_log.append({
+                    "query": query, "run": run + 1, "status": status,
+                    "detail": detail, "elapsed_ms": round(elapsed, 1),
+                })
+                continue
 
-        duration_ms = body.get("duration_ms", elapsed)
-        n_citations = len(body.get("citations", []))
-        durations_ms.append(duration_ms)
-        citation_counts.append(n_citations)
-        print(f"    ✓ {duration_ms:.0f}ms  citations={n_citations}  status={body.get('status')}")
+            duration_ms = body.get("duration_ms", elapsed)
+            n_citations = len(body.get("citations", []))
+            n_steps = body.get("total_steps")
+            durations_ms.append(duration_ms)
+            citation_counts.append(n_citations)
+            if n_steps is not None:
+                steps_per_run.append(n_steps)
+            print(f"    ok {duration_ms:.0f}ms  citations={n_citations}  steps={n_steps}  status={body.get('status')}")
 
     if not durations_ms:
-        return {"error": "All agent runs failed"}
+        return {"error": "All agent runs failed", "errors_detail": error_log}
+
+    durations_ms_sorted = sorted(durations_ms)
 
     result = {
-        "total_runs": len(AGENT_QUERIES),
+        "total_runs": total_calls,
+        "successful_runs": len(durations_ms),
         "errors": errors,
+        "errors_detail": error_log,
         "mean_duration_ms": round(statistics.mean(durations_ms), 1),
+        "median_duration_ms": round(statistics.median(durations_ms), 1),
         "min_duration_ms": round(min(durations_ms), 1),
         "max_duration_ms": round(max(durations_ms), 1),
         "avg_citations": round(statistics.mean(citation_counts), 1) if citation_counts else 0,
     }
+    if steps_per_run:
+        result["avg_steps"] = round(statistics.mean(steps_per_run), 1)
 
-    print(f"\n  Results:")
-    print(f"    Mean duration: {result['mean_duration_ms']} ms")
-    print(f"    Min / Max:     {result['min_duration_ms']} / {result['max_duration_ms']} ms")
-    print(f"    Avg citations: {result['avg_citations']}")
+    print(f"\n  Results (n={len(durations_ms)}):")
+    print(f"    Mean / median duration: {result['mean_duration_ms']} / {result['median_duration_ms']} ms")
+    print(f"    Min / Max:              {result['min_duration_ms']} / {result['max_duration_ms']} ms")
+    print(f"    Avg citations:          {result['avg_citations']}")
+    if steps_per_run:
+        print(f"    Avg reasoning steps:    {result['avg_steps']}")
 
     return result
 
@@ -446,28 +455,34 @@ RESUME_TEMPLATE = """
 ## Resume Metrics -- AI Software Engineering Agent
 
 ### RAG Pipeline (full query incl. LLM generation)
-- **Recall@5**: {recall_at_5}% on {total_queries} hybrid-retrieval queries
-- **p50 latency**: {latency_p50_ms} ms
-- **p95 latency**: {latency_p95_ms} ms
-- **p99 latency**: {latency_p99_ms} ms
+- **Recall@5**: {recall_at_5}% on {total_queries} hybrid-retrieval queries  (errors: {errors})
+- **p50 / p95 / p99 latency**: {latency_p50_ms} / {latency_p95_ms} / {latency_p99_ms} ms
 - **Mean latency**: {latency_mean_ms} ms
 
-### Retrieval-Only Latency (embed + vector search, no LLM)
-- Cold run: {retrieval_cold_ms} ms
-- Warm mean: {retrieval_warm_mean_ms} ms
-- Warm min:  {retrieval_warm_min_ms} ms  (best proxy for pure retrieval path)
+### Retrieval vs. Generation split (real, from the API -- not inferred)
+- Retrieval (embed + hybrid search) p50 / mean: {retrieval_ms_p50} / {retrieval_ms_mean} ms
+- Groq generation p50 / mean: {generation_ms_p50} / {generation_ms_mean} ms
 
-### Embedding Cache (Redis, same query x10)
-- Cold: {cache_cold_ms} ms  |  Warm mean: {cache_warm_mean_ms} ms
-- Speedup: {cache_speedup}x  |  Estimated savings: ~{cache_savings_pct}%
+### Embedding Cache (Redis-backed, wired into the query path)
+- First call (miss) retrieval: {cache_first_call_ms} ms
+- Repeat calls (hit) retrieval mean: {cache_repeat_mean_ms} ms
+- Cache hit rate (runs 2-10): {cache_hit_rate_pct}%
+- Retrieval speedup on hit: {cache_speedup}x
 
 ### Ingestion Throughput
 - {chunks_created} chunks indexed from {files_parsed} files in {total_elapsed_sec}s (incl. git clone)
 - Conservative floor: {chunks_per_sec} chunks/sec
 
-### Agent Runs
-- Mean agent run duration: {mean_agent_ms} ms
+### Agent Runs (n={agent_n})
+- Mean / median duration: {mean_agent_ms} / {median_agent_ms} ms
 - Average citations per run: {avg_citations}
+- Average reasoning steps: {avg_steps}
+- Errors: {agent_errors}
+
+NOTE: any non-zero "errors" above means some queries failed. Check
+errors_detail in the JSON output for the full status/detail per failure,
+and cross-reference the API server's own console/log output at the
+matching timestamp for the underlying traceback.
 """
 
 def generate_report(results: dict) -> str:
@@ -475,28 +490,33 @@ def generate_report(results: dict) -> str:
     cache = results.get("cache", {})
     ingest = results.get("ingestion", {})
     agent = results.get("agent", {})
-    retrieval = results.get("retrieval_only", {})
 
     return RESUME_TEMPLATE.format(
         recall_at_5=rag.get("recall_at_5", "N/A"),
         total_queries=rag.get("total_queries", "N/A"),
+        errors=rag.get("errors", "N/A"),
         latency_p50_ms=rag.get("latency_p50_ms", "N/A"),
         latency_p95_ms=rag.get("latency_p95_ms", "N/A"),
         latency_p99_ms=rag.get("latency_p99_ms", "N/A"),
         latency_mean_ms=rag.get("latency_mean_ms", "N/A"),
-        retrieval_cold_ms=retrieval.get("cold_ms", "N/A"),
-        retrieval_warm_mean_ms=retrieval.get("warm_mean_ms", "N/A"),
-        retrieval_warm_min_ms=retrieval.get("warm_min_ms", "N/A"),
-        cache_cold_ms=cache.get("cold_ms", "N/A"),
-        cache_warm_mean_ms=cache.get("warm_mean_ms", "N/A"),
-        cache_speedup=cache.get("speedup_factor", "N/A"),
-        cache_savings_pct=cache.get("estimated_cache_savings_pct", "N/A"),
+        retrieval_ms_p50=rag.get("retrieval_ms_p50", "N/A"),
+        retrieval_ms_mean=rag.get("retrieval_ms_mean", "N/A"),
+        generation_ms_p50=rag.get("generation_ms_p50", "N/A"),
+        generation_ms_mean=rag.get("generation_ms_mean", "N/A"),
+        cache_first_call_ms=cache.get("first_call_retrieval_ms", "N/A"),
+        cache_repeat_mean_ms=cache.get("repeat_calls_retrieval_ms_mean", "N/A"),
+        cache_hit_rate_pct=cache.get("cache_hit_rate_pct", "N/A"),
+        cache_speedup=cache.get("retrieval_speedup_factor", "N/A"),
         chunks_created=ingest.get("chunks_created", "N/A"),
         files_parsed=ingest.get("files_parsed", "N/A"),
         total_elapsed_sec=ingest.get("total_elapsed_sec", "N/A"),
         chunks_per_sec=ingest.get("chunks_per_sec_incl_clone", "N/A"),
+        agent_n=agent.get("successful_runs", "N/A"),
         mean_agent_ms=agent.get("mean_duration_ms", "N/A"),
+        median_agent_ms=agent.get("median_duration_ms", "N/A"),
         avg_citations=agent.get("avg_citations", "N/A"),
+        avg_steps=agent.get("avg_steps", "N/A"),
+        agent_errors=agent.get("errors", "N/A"),
     )
 
 
@@ -509,6 +529,7 @@ def main():
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="Base API URL")
     parser.add_argument("--repo-id", default="yield-curve-lab", help="Ingested repo ID to query against")
     parser.add_argument("--rag-runs", type=int, default=3, help="Runs per RAG query")
+    parser.add_argument("--agent-runs", type=int, default=3, help="Runs per agent query")
     parser.add_argument("--skip-ingestion", action="store_true", help="Skip the ingestion benchmark (slow)")
     parser.add_argument("--skip-agent", action="store_true", help="Skip agent benchmark (uses LLM quota)")
     parser.add_argument("--output", default="benchmark_results.md", help="Output file path")
@@ -535,8 +556,6 @@ def main():
     # Run benchmarks
     all_results["rag"] = benchmark_rag(args.url, args.repo_id, n_runs=args.rag_runs)
 
-    all_results["retrieval_only"] = benchmark_retrieval_only(args.url, args.repo_id)
-
     all_results["cache"] = benchmark_embedding_cache(args.url, args.repo_id)
 
     if not args.skip_ingestion:
@@ -546,7 +565,7 @@ def main():
         all_results["ingestion"] = {}
 
     if not args.skip_agent:
-        all_results["agent"] = benchmark_agent(args.url, args.repo_id)
+        all_results["agent"] = benchmark_agent(args.url, args.repo_id, n_runs=args.agent_runs)
     else:
         print("\n[Skipping agent benchmark]")
         all_results["agent"] = {}

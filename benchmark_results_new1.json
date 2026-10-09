@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-10-09T11:57:08.678083",
+  "base_url": "http://127.0.0.1:8000",
+  "repo_id": "yield-curve-lab",
+  "rag": {
+    "total_queries": 27,
+    "errors": 3,
+    "errors_detail": [
+      {
+        "query": "How is DV01 calculated?",
+        "run": 1,
+        "status": 502,
+        "detail": "Could not generate grounded answer from retrieved context: Groq could not generate a response.",
+        "elapsed_ms": 745.5
+      },
+      {
+        "query": "How is DV01 calculated?",
+        "run": 2,
+        "status": 502,
+        "detail": "Could not generate grounded answer from retrieved context: Groq could not generate a response.",
+        "elapsed_ms": 1527.4
+      },
+      {
+        "query": "How is DV01 calculated?",
+        "run": 3,
+        "status": 502,
+        "detail": "Could not generate grounded answer from retrieved context: Groq could not generate a response.",
+        "elapsed_ms": 1998.9
+      }
+    ],
+    "recall_at_5": 100.0,
+    "latency_p50_ms": 6254.0,
+    "latency_p95_ms": 13549.1,
+    "latency_p99_ms": 14745.4,
+    "latency_mean_ms": 6885.2,
+    "latency_min_ms": 870.8,
+    "latency_max_ms": 14745.4,
+    "note": "Full end-to-end latency incl. LLM generation.",
+    "retrieval_ms_p50": 51.5,
+    "retrieval_ms_mean": 68.6,
+    "generation_ms_p50": 6102.2,
+    "generation_ms_mean": 6787.6
+  },
+  "cache": {
+    "first_call_retrieval_ms": 37.3,
+    "repeat_calls_retrieval_ms_mean": 44.7,
+    "cache_hit_rate_pct": 100.0,
+    "retrieval_speedup_factor": 0.83,
+    "errors": 0,
+    "note": "retrieval_ms and cache_hit are read directly from the API response (rag.py times retrieval and generation separately; retrieval.py now checks the embedding cache before calling the embedding API). This isolates the cache effect from Groq generation-time variance."
+  },
+  "ingestion": {
+    "total_elapsed_sec": 95.7,
+    "files_scanned": 14,
+    "files_parsed": 14,
+    "chunks_created": 85,
+    "chunks_per_sec_incl_clone": 0.89,
+    "files_per_sec_incl_clone": 0.15,
+    "note": "Total elapsed includes GitHub clone over network. chunks_per_sec_incl_clone is a conservative floor; pure parse+embed throughput is higher."
+  },
+  "agent": {
+    "total_runs": 20,
+    "successful_runs": 20,
+    "errors": 0,
+    "errors_detail": [],
+    "mean_duration_ms": 26065.6,
+    "median_duration_ms": 24020.6,
+    "min_duration_ms": 3705.6,
+    "max_duration_ms": 65254.3,
+    "avg_citations": 9.5,
+    "avg_steps": 2.5
+  }
+}

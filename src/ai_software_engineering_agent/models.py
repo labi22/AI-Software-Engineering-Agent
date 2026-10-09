@@ -121,3 +121,6 @@ class RAGResponse:
     model: str = ""
     provider: str = ""
     strategy_used: str = "hybrid"
+    retrieval_ms: float = 0.0
+    generation_ms: float = 0.0
+    cache_hit: bool | None = None

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Sequence
 
 from .config import Settings
+from .coordination import CoordinationService
 from .embeddings import EmbeddingClient
 from .ingestion import chunk_document, discover_files, parse_file
 from .lexical import BM25Index
@@ -157,17 +159,20 @@ class RAGService:
         llm_client: LLMClient | None = None,
         bm25_index: BM25Index | None = None,
         retriever: HybridRetriever | None = None,
+        coordination: CoordinationService | None = None,
         settings: Settings,
     ) -> None:
         self.vector_store = vector_store
         self.embedding_client = embedding_client
         self.llm_client = llm_client
         self.bm25_index = bm25_index or BM25Index()
+        self.coordination = coordination
         self.retriever = retriever or HybridRetriever(
             vector_store=self.vector_store,
             bm25_index=self.bm25_index,
             embedding_client=self.embedding_client,
             reranker=SymbolBoostReranker(),
+            coordination=self.coordination,
         )
         self.settings = settings
 
@@ -257,20 +262,26 @@ class RAGService:
         if self.llm_client is None:
             raise LLMConfigurationError("OPENAI_API_KEY must be set when LLM_PROVIDER=openai.")
 
+        retrieval_start = time.perf_counter()
         retrieval_results = await self.retrieve(
             query=query,
             strategy=strategy,
             filter=filter,
             top_k=top_k,
         )
+        retrieval_ms = (time.perf_counter() - retrieval_start) * 1000
+        cache_hit = getattr(self.retriever, "last_cache_hit", None)
+
         system_instruction = format_context_prompt(retrieval_results)
 
+        generation_start = time.perf_counter()
         llm_response = await self.llm_client.generate(
             LLMRequest(
                 prompt=query,
                 system_instruction=system_instruction,
             )
         )
+        generation_ms = (time.perf_counter() - generation_start) * 1000
 
         citations = extract_citations(llm_response.text, retrieval_results)
 
@@ -282,4 +293,7 @@ class RAGService:
             model=llm_response.model,
             provider=llm_response.provider,
             strategy_used=strategy.value if isinstance(strategy, RetrievalStrategy) else str(strategy),
+            retrieval_ms=round(retrieval_ms, 1),
+            generation_ms=round(generation_ms, 1),
+            cache_hit=cache_hit,
         )
